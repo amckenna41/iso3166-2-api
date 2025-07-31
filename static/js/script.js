@@ -1,38 +1,65 @@
 let version = "";
 let lastUpdated = "";
-let timestamp = "";
-var monthNames = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 
-//make get request to pypi json endpoint
-fetch("https://pypi.org/pypi/iso3166-2/json")
-    .then(response => { 
-    if (!response.ok) { 
-        throw new Error("Error making GET request to PyPI server"); 
-    } 
-    return response.json();
-    })
-    .then(data => { 
-        //parse version from pypi object
-        version = data['info']['version']
+//make async request to pypi json endpoint to get the software's current version
+async function loadVersion() {
+    try {
+        const response = await fetch("https://pypi.org/pypi/iso3166-2/json");
+        if (!response.ok) throw new Error("Failed to fetch version");
+        const data = await response.json();
+        version = data.info.version;
+        console.log("Version: ", version);
+        // const versionElem = document.getElementById("version");
+        // if (versionElem) {
+        //     versionElem.innerHTML = "<b>Version: </b>" + version;
+        // }
+    } catch (error) {
+        console.error("Error fetching version:", error);
+    }
+}
 
-        //timestamp for latest published release of software on pypi
-        timestamp = new Date (String(data['releases'][version][0]['upload_time']) + "Z")
+//make async request to pypi json endpoint to get the software's latest month update
+async function loadLatestUpdate() {
+    try {
+        const response = await fetch("https://pypi.org/pypi/iso3166-2/json");
+        if (!response.ok) throw new Error("Failed to fetch version metadata");
+        const data = await response.json();
+
+        const latestVersion = data.info.version;
+        const releaseFiles = data.releases[latestVersion];
         
-        //extract month and year from software release timestamp
-        lastUpdated = monthNames[timestamp.getMonth()] + " " + timestamp.getFullYear()
-    })
-    .catch(error => { 
-        console.error("Error making GET request to PyPI server: ", error);});
+        if (!releaseFiles || releaseFiles.length === 0) {
+            throw new Error("No release files found for the latest version");
+        }
 
-window.onload = function(){ 
+        const uploadTime = releaseFiles[0].upload_time_iso_8601 || releaseFiles[0].upload_time;
+        const uploadDate = new Date(uploadTime);
 
-    //delay for author element to allow for Version and Last Updated metadata to be pulled from pypi first
-    setTimeout(function(){
-        document.getElementById('author').style.visibility = "visible";
-        },30);
+        // lastUpdated = (uploadDate.getUTCMonth() + 1) + uploadDate.getUTCFullYear()
+        lastUpdated = new Intl.DateTimeFormat("en-US", {
+            year: "numeric",
+            month: "long"
+        }).format(uploadDate);
+
+        console.log("Last Updated: ", lastUpdated);
+        
+    } catch (error) {
+        console.error("Error fetching update date:", error);
+    }
+}
+
+window.onload = async function(){ 
+
+    //pull iso3166-2 version from pypi
+    await loadVersion();
+
+    //pull iso3166-2 latest month and year from pypi
+    await loadLatestUpdate();
 
     //set version to its element after page load
     document.getElementById("version").innerHTML = "<b>Version: </b>" + version;
+
+    //set latest update month to its element after page load
     document.getElementById("last-updated").innerHTML = "<b>Last Updated: </b>" + lastUpdated;
 
     //iterate over each menu section element, highlight it and scroll to it on page when hovered over & clicked
@@ -79,7 +106,7 @@ window.onload = function(){
     var elements = [];
 
     //get dimensions of each menu div section on main content page
-    function calculElements () {
+    function calcElements () {
         var totalHeight = 0; //total height for div 
         elements = [];
         [].forEach.call(document.querySelectorAll('.content-section'), function (div) {
@@ -125,17 +152,17 @@ window.onload = function(){
     }
 
     //call create elements function
-    calculElements();
+    calcElements();
 
     //on page load, call create elements function 
     window.onload = () => { 
-        calculElements();
+        calcElements();
     };
 
     //create resize event listener, used when page is resized
     window.addEventListener("resize", debounce(function (e) {
         e.preventDefault();
-        calculElements();
+        calcElements();
     }));
 
     //create scroll event listener, used to scroll between sections on page
@@ -143,27 +170,30 @@ window.onload = function(){
         e.preventDefault();
         onScroll();
     });
-    
-    //iterate over all copy to clipboard buttons and create event listener that copies the API URL once clicked
-    let copyTextBtn1 = document.querySelector("#copy-text-btn1");
-    let copyTextBtn2 = document.querySelector("#copy-text-btn2");
-    let copyTextBtn3 = document.querySelector("#copy-text-btn3");
 
-    copyTextBtn1.addEventListener("click", function () {
-        let apiURL = copyTextBtn1.getAttribute('data-api-url')
-        navigator.clipboard.writeText(apiURL);
-        console.log('API URL copied to clipboard: ' + apiURL);
+    //query all buttons that start with ID "copy-text-btn"
+    const copyButtons = document.querySelectorAll('[id^="copy-text-btn"]');
+
+    //iterate over all copy to clipboard buttons and create event listener that copies the API URL once clicked & displays tooltip
+    copyButtons.forEach(button => {
+        button.addEventListener("click", () => {
+            const apiURL = button.getAttribute('data-api-url');
+            navigator.clipboard.writeText(apiURL).then(() => {
+                console.log('API URL copied to clipboard: ' + apiURL);
+
+                // Show tooltip
+                const tooltip = button.querySelector('.tooltip-text');
+                if (tooltip) {
+                    tooltip.style.visibility = 'visible';
+                    tooltip.style.opacity = '1';
+
+                    setTimeout(() => {
+                        tooltip.style.visibility = 'hidden';
+                        tooltip.style.opacity = '0';
+                    }, 1500); // hide after 1.5 seconds
+                }
+            });
+        });
     });
 
-    copyTextBtn2.addEventListener("click", function () {
-        let apiURL = copyTextBtn2.getAttribute('data-api-url')
-        navigator.clipboard.writeText(apiURL);
-        console.log('API URL copied to clipboard: ' + apiURL);
-    });
-
-    copyTextBtn3.addEventListener("click", function () {
-        let apiURL = copyTextBtn3.getAttribute('data-api-url')
-        navigator.clipboard.writeText(apiURL);
-        console.log('API URL copied to clipboard: ' + apiURL);
-    });
 }

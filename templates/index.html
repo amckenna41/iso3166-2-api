@@ -5,8 +5,8 @@
     <title>ISO 3166-2 API Documentation 🌎</title>
     <meta charset="utf-8">
     <meta name="author" content="AJ McKenna">
-    <meta content="Get the most up-to-date and accurate subdivision data for all countries within the ISO 3166 via a RESTful API." name="description">
-    <meta name="keywords" content="iso,iso3166,iso3166-1,iso3166-2,rest,api,countries,subdivisions,world,json">
+    <meta content="A lightweight Python package, and accompanying API, used to access all of the world's most up-to-date and accurate ISO 3166-2 subdivision data, including: name, local/other name, code, parent code, type, latitude/longitude, flag and history." name="description">
+    <meta name="keywords" content="iso,iso3166,iso3166-1,iso3166-2,rest,api,countries,subdivisions,world,json,updates">
     <meta http-equiv="cleartype" content="on">
     <meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -18,16 +18,28 @@
     <link href="https://fonts.googleapis.com/css2?family=Roboto:ital,wght@0,300;0,400;0,500;1,300&family=Source+Code+Pro:wght@300&display=swap" rel="stylesheet"> 
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css">
     <link rel="stylesheet" type="text/css" href= "{{ url_for('static', filename='css/style.css') }}">
-    <link rel="stylesheet" type="text/css" href= "{{ url_for('static', filename='css/hightlightjs-dark.css') }}">    
+    <link rel="stylesheet" type="text/css" href= "{{ url_for('static', filename='css/highlightjs-dark.css') }}">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/9.8.0/highlight.min.js"></script>
     <script src= "{{ url_for('static', filename='js/script.js') }}"></script>
 
     <!-- highlight syntax on page load -->
-    <script>hljs.initHighlightingOnLoad();</script>    
+    <script>hljs.initHighlightingOnLoad();</script>
+    
 </head>
 
 <!-- left hand menu section -->
 <body class="one-content-column-version">
+    <button class="theme-toggle" onclick="toggleTheme()">Switch Theme ⚡</button>
+    <script>
+        function toggleTheme() {
+            document.body.classList.toggle('dark-theme');
+            localStorage.setItem('theme', document.body.classList.contains('dark-theme') ? 'dark' : 'light');
+        }
+        // Load user's preferred theme
+        if (localStorage.getItem('theme') === 'dark') {
+            document.body.classList.add('dark-theme');
+        }
+    </script>
     <div class="left-menu">
         <div class="content-logo">
             <div class="logo" style="display: flex;">
@@ -44,23 +56,22 @@
         <div class="content-menu">
             <div class="content-infos">
                 <!-- version and last updated info -->
-                <!-- <div class="info" id="version"><b>Version:</b> 1.5.3</div> -->
                 <div class="info" id="version"></div>
-                <!-- <div class="info" id="last-updated"><b>Last Updated:</b> March 2024</div> -->
                 <div class="info" id="last-updated"></div>
-                <div class="info" id="author" style="visibility:hidden;"><b>Developer/Maintainer:</b> <a href="https://github.com/amckenna41/" target="_blank">AJ</a></div>
+                <div class="info" id="author"><b>Developer/Maintainer:</b> <a href="https://github.com/amckenna41/" target="_blank">AJ</a></div>
             </div>
             <!-- list of available sections in API documentation -->
             <ul id="section-list-menu">
                 <li class="scroll-to-link active" data-target="content-about"><a>About</a></li>
                 <li class="scroll-to-link" data-target="content-attributes"><a>Attributes</a></li>
+                <li class="scroll-to-link" data-target="content-query-string-parameters"><a>Query String Parameters</a></li>
                 <li class="scroll-to-link" data-target="content-endpoints"><a>Endpoints</a></li>
                 <li class="scroll-to-link" data-target="content-all" style="padding-left: 5%;"><a>All</a></li>
-                <li class="scroll-to-link" data-target="content-country-code" style="padding-left: 5%;"><a>Country alpha code</a></li>
-                <li class="scroll-to-link" data-target="content-country-name" style="padding-left: 5%;"><a>Country name</a></li>
-                <li class="scroll-to-link" data-target="content-subdivision-code" style="padding-left: 5%;"><a>Subdivision code</a></li>
-                <li class="scroll-to-link" data-target="content-subdivision-name" style="padding-left: 5%;"><a>Subdivision name</a></li>
-                <li class="scroll-to-link" data-target="content-list-subdivisions" style="padding-left: 5%;"><a>List subdivision codes</a></li>
+                <li class="scroll-to-link" data-target="content-code" style="padding-left: 5%;"><a>Alpha Code</a></li>
+                <li class="scroll-to-link" data-target="content-subdivision" style="padding-left: 5%;"><a>Subdivision</a></li>
+                <li class="scroll-to-link" data-target="content-search" style="padding-left: 5%;"><a>Search</a></li>
+                <li class="scroll-to-link" data-target="content-country-name" style="padding-left: 5%;"><a>Country Name</a></li>
+                <li class="scroll-to-link" data-target="content-list-subdivisions" style="padding-left: 5%;"><a>List Subdivisions</a></li>
                 <li class="scroll-to-link" data-target="content-contributing"><a>Contributing</a></li>
                 <li class="scroll-to-link" data-target="content-credits"><a>Credits</a></li>
             </ul>
@@ -75,13 +86,14 @@
             <div class="overflow-hidden content-section" id="content-about" style="font-size: 1.333em;">
                 <h1>About</h1>
                 <p> 
-                    The ISO 3166-2 API is a custom-built, open-source and free to use RESTful API that provides programmatic access to a plethora of subdivision data attributes 
-                    for all ISO 3166-2 countries/territories. For each country, the API returns its subdivisions' codes, names, local names, types, parent codes, 
-                    latitude/longitudes and flags. The API accepts the alpha-2, alpha-3 and numeric variations of the ISO 3166-1 country codes, this will return all the 
-                    subdivision data for the sought country. The country name can also be used to search for the sought country's subdivision data. Finally, the ISO 3166-2 
-                    subdivision name and code can be used to search for a sought subdivision.
-                    <br><br>A demo of the API and Python software is available <a href="https://colab.research.google.com/drive/1btfEx23bgWdkUPiwdwlDqKkmUp1S-_7U?usp=sharing" target="_blank">here</a>.<br>
-                    Source code available <a href="https://github.com/amckenna41/iso3166-2-api" target="_blank">here</a>.
+                    The ISO 3166-2 API is a custom-built, open-source and free to use RESTful API wrapper for the <a href="https://github.com/amckenna41/iso3166-2" target="_blank">iso3166-2</a> repo 
+                    and dataset that stores the latest and most up-to-date ISO 3166-2 subdivision data for 5,049 subdivisions across ~250 countries/territories represented in the ISO 3166-2 standard. 
+                    The API supports supports a plethora of bespoke, informative and useful attributes and data, which are discussed further below.
+                    <br><br>A demo of the API and Python software is available 
+                    <a href="https://colab.research.google.com/drive/1btfEx23bgWdkUPiwdwlDqKkmUp1S-_7U?usp=sharing" target="_blank">here</a>.  
+                    <br>iso3166-2 software homepage is available
+                    <a href="https://github.com/amckenna41/iso3166-2" target="_blank">here</a>. 
+                    <br> A Medium article is available <a href="https://ajmckenna69.medium.com/iso3166-2-71a13d9157f7" target="_blank">here</a>. <br>
                 </p>
             </div>
 
@@ -89,164 +101,174 @@
             <div class="overflow-hidden content-section" id="content-attributes">
                 <h1>Attributes</h1>
                 <p>
-                    The list of data attributes supported by the API for each ISO 3166-2 code entry, along with a description of each is below:
-                    <ul style="color:#D6F0F0">
-                        <li>Code - subdivision code, according to the ISO 3166-2.</li>
-                        <li>Name - subdivision name.</li>
-                        <li>Local name - subdivision name in country's local languages.</li>
-                        <li>Type - subdivision type e.g. region, state, canton, parish etc.</li>
-                        <li>Parent code - the parent regional/subdivision code for subdivision, if applicable.</li>
-                        <li>Latitude/Longitude - the coordinates for the subdivision, according to Google Maps API.</li>
-                        <li>Flag - URL for subdivision flag (from <a href="https://github.com/amckenna41/iso3166-flag-icons" target="_blank">iso3166-flag-icons</a> repo), if applicable.</li>
+                    There are seven main attributes returned from the API:
+                    <ul style="color: #D6F0F0;">
+                        <li>Name - official subdivision name</li>
+                        <li>Local/other name - subdivision name in local language or any alternative name/nickname it is commonly known by</li>
+                        <li>Parent Code - subdivision parent code</li>
+                        <li>Type - subdivision type e.g. region, state, canton, parish etc</li>
+                        <li>Latitude/Longitude - subdivision coordinates</li>
+                        <li>Flag - subdivision flag from the <a href="https://github.com/amckenna41/iso3166-flag-icons" target="_blank">iso3166-flag-icons</a> repo; this is another ISO 3166 related custom-built and bespoke dataset of over 3500 regional/subdivision flags </li>
+                        <li>History - historical updates/changes to the subdivision code and naming conventions, as per the custom-built and bespoke <a href="https://github.com/amckenna41/iso3166-updates" target="_blank">iso3166-updates</a> repo</li>
+
                     </ul>
                 </p>
             </div>
 
-            <!-- Endpoints section -->
-            <div class="overflow-hidden content-section" id="content-endpoints">
-                <h2>Endpoints</h2>
+            <!-- Query string parameters section -->
+            <div class="overflow-hidden content-section" id="content-query-string-parameters">
+                <h1>Query String Parameters</h1>
                 <p>
-                    The ISO 3166-2 API currently has the following 6 endpoints:
+                    There are three main query string parameters that can be passed through several of the endpoints of the API:
+                    <ul style="color: #D6F0F0;">
+                <li><b>filter_attributes</b>: this parameter allows you to filter the outputs from the various endpoints by only including
+                    a subset of the required attributes. A single attribute or comma separated list of attributes can be input.
+                    The supported attribute values are listed above. </li>
+                <li><b>likeness</b>: this is a value between 1 and 100 that increases or reduces the % of similarity/likeness that 
+                    the inputted search terms have to match to the subdivision data in the subdivision name and subdivision 
+                    local/other name attributes. Similarly, it can be used to convey the % of similarity/likeness that the inputted 
+                    search terms have to match to the country of the associated subdivisions. This can be used in the /api/search 
+                    and /api/country_name endpoints. Having a higher value should return more exact and less matches and having a 
+                    lower value will return less exact but more matches, e.g /api/search/Paris?likeness=50, /api/search/Bremen,Saxony?likeness=90 (default=100).</li>
+                    
+                <li><b>excludeMatchScore</b>: exclude the matchScore attribute from the search results when using the /api/search endpoint. The match score 
+                    is the % of a match each returned subdivision data object is to the search terms, with 100% being an exact match. By default the match score 
+                    is returned for each object, e.g /api/search/Bucharest?excludeMatchScore=1, /api/search/Oregon?excludeMatchScore=1 (default=0).</li>
+                </ul>
                 </p>
-                    <!-- html table outlining available endpoints -->
-                    <table>
-                        <thead>
-                        <tr>
-                            <th>Endpoint</th>
-                            <th>Description</th>
-                        </tr>
-                        </thead>
-                        <tbody>
-                        <tr>
-                            <td>https://iso3166-2-api.vercel.app/api/all</td>
-                            <td>
-                                Return all subdivision data attributes for all countries in the ISO 3166-2.
-                            </td>
-                        </tr>
-                        <tr>
-                            <td>https://iso3166-2-api.vercel.app/api/alpha/{input_alpha}</td>
-                            <td>
-                                Return all subdivision data attributes for country/countries with the matching ISO 3166-1 2 letter alpha-2, 3 letter alpha-3 or numeric country 
-                                code. A comma separated list of country codes can also be input.
-                            </td>
-                        </tr>
-                        <tr>
-                            <td>https://iso3166-2-api.vercel.app/api/country_name/{input_country_name}</td>
-                            <td>
-                                Return all subdivision data attributes for input country name, as it is commonly known in English. A comma separated list of country names can also be input.
-                            </td>
-                        </tr>
-                        <tr>
-                            <td>https://iso3166-2-api.vercel.app/api/subdivision/{input_subdivision_code}</td>
-                            <td>
-                                Return the subdivision data for a specific input via its ISO 3166-2 code. A comma separated list of subdivision codes can also be input.
-                            </td>     
-                        </tr>
-                        <tr>
-                            <td>https://iso3166-2-api.vercel.app/api/name/{input_subdivision_name}</td>
-                            <td>
-                                Return all subdivision data attributes for input subdivision name, as it is commonly known in English. A comma separated list of subdivision names can also be input.
-                            </td>
-                        </tr>
-                        <tr>
-                            <td>https://iso3166-2-api.vercel.app/api/list_subdivisions</td>
-                            <td>
-                                Return all subdivision codes for all countries.
-                            </td>
-                        </tr>
-                        </tbody>
-                    </table>
-                </div>
+            </div>
 
             <!-- All endpoint section -->
+            <div class="overflow-hidden content-section" id="content-endpoints">
+            <h1>Endpoints</h1>
+            <p>
+                The ISO 3166-2 API currently has 6 main endpoints, /all, /alpha, /subdivision, /search, /country_name, and /list_subdivisions. A description of each along with a few examples are below.
+            </p>
+            </div>
+
             <div class="overflow-hidden content-section" id="content-all">
-                <h1>all</h1>
+                <h2>All</h2>
                 <p>
-                    The /all endpoint returns all the subdivision data attribute values for all ISO 3166-2 countries. The list of countries supported is according to the 
-                    <a href="https://en.wikipedia.org/wiki/List_of_ISO_3166_country_codes" target="_blank">ISO 3166-1 standard</a>. <br><br>
+                    The /api/all endpoint returns all ISO 3166-2 subdivision data for all countries/territories. The list of countries supported is according 
+                    to the <a href="https://en.wikipedia.org/wiki/List_of_ISO_3166_country_codes" target="_blank">ISO 3166-1 standard</a>. <br><br>
                     <code style="padding-right: 10px;" class="higlighted break-word">https://iso3166-2-api.vercel.app/api/all</code>
-                    <button style="cursor: pointer;" id="copy-text-btn1" data-api-url="https://iso3166-2-api.vercel.app/api/all"><i class="fa fa-clone"></i></button>
+                    <!-- <button style="cursor: pointer;" id="copy-text-btn2" data-api-url="https://iso3166-updates.vercel.app/api/all"><i class="fa fa-clone"></i></button> -->
+                    <button style="cursor: pointer; position: relative;" id="copy-text-btn2" data-api-url="https://iso3166-2-api.vercel.app/api/all" onclick="copyToClipboard(this)">
+                    <i class="fa fa-clone"></i>
+                    <span class="tooltip-text">Copied!</span>
+                    </button>
+
                 </p>
             </div>
 
-            <!-- Alpha country code endpoint section -->
-            <div class="overflow-hidden content-section" id="content-country-code">
-                <h1>country alpha code</h1>
+            <!-- Alpha Code endpoint section -->
+            <div class="overflow-hidden content-section" id="content-code">
+                <h2>Alpha</h2>
                 <p>
-                    The /alpha endpoint returns all the subdivision data attribute values for the country with the matching ISO 3166-1 2 letter alpha-2, 3 letter alpha-3 or numeric country codes. 
-                    A comma separated list of varying country codes can also be input. <br><br>
-                    <code style="padding-right: 10px;" class="higlighted break-word">https://iso3166-2-api.vercel.app/api/alpha/{alpha}</code>
-                    <button style="cursor: pointer;" id="copy-text-btn2" data-api-url="https://iso3166-2-api.vercel.app/api/alpha2/"><i class="fa fa-clone"></i></button> <br><br>
+                    The /api/alpha endpoint returns all ISO 3166-2 subdivision data for a country/territory according to its ISO 3166-1 alpha-2, alpha-3 or numeric country code. 
+                    A comma separated list of country codes can also be input.<br><br>
+                    <code style="padding-right: 10px;" class="higlighted break-word">https://iso3166-2-api.vercel.app/api/alpha/{input_alpha}</code>
+                    <button style="cursor: pointer; position: relative;" id="copy-text-btn3" data-api-url="https://iso3166-2-api.vercel.app/api/alpha/{input_alpha}" onclick="copyToClipboard(this)"> 
+                    <i class="fa fa-clone"></i>
+                        <span class="tooltip-text">Copied!</span>
+                    </button> <br><br>
+                    <!-- <button style="cursor: pointer;" id="copy-text-btn3" data-api-url="https://iso3166-2-api.vercel.app/api/alpha/{input_alpha}"><i class="fa fa-clone"></i></button> <br><br> -->                
                     <a href="https://iso3166-2-api.vercel.app/api/alpha/AD" target="_blank"><code style="padding-right: 10px;" class="higlighted break-word">https://iso3166-2-api.vercel.app/api/alpha/AD</code></a> <br>
                     <a href="https://iso3166-2-api.vercel.app/api/alpha/DE" target="_blank"><code style="padding-right: 10px;" class="higlighted break-word">https://iso3166-2-api.vercel.app/api/alpha/DE</code></a> <br>
-                    <a href="https://iso3166-2-api.vercel.app/api/alpha/YEM,ZAF,ZMB" target="_blank"><code style="padding-right: 10px;" class="higlighted break-word">https://iso3166-2-api.vercel.app/api/alpha/YEM,ZAF,ZMB</code></a> <br>
-                    <a href="https://iso3166-2-api.vercel.app/api/alpha/558,690,807" target="_blank"><code style="padding-right: 10px;" class="higlighted break-word">https://iso3166-2-api.vercel.app/api/alpha/558,690,807</code></a> <br>
-                    <a href="https://iso3166-2-api.vercel.app/api/alpha/GN,KEN,434" target="_blank"><code style="padding-right: 10px;" class="higlighted break-word">https://iso3166-2-api.vercel.app/api/alpha/GN,KEN,434</code></a>
-
+                    <a href="https://iso3166-2-api.vercel.app/api/alpha/MEX" target="_blank"><code style="padding-right: 10px;" class="higlighted break-word">https://iso3166-2-api.vercel.app/api/alpha/MEX</code></a> <br>
+                    <a href="https://iso3166-2-api.vercel.app/api/alpha/PRY" target="_blank"><code style="padding-right: 10px;" class="higlighted break-word">https://iso3166-2-api.vercel.app/api/alpha/PRY</code></a> <br>
+                    <a href="https://iso3166-2-api.vercel.app/api/alpha/DE,674" target="_blank"><code style="padding-right: 10px;" class="higlighted break-word">https://iso3166-2-api.vercel.app/api/alpha/DE,674</code></a> <br>
+                    <a href="https://iso3166-2-api.vercel.app/api/alpha/MEX,768" target="_blank"><code style="padding-right: 10px;" class="higlighted break-word">https://iso3166-2-api.vercel.app/api/alpha/MEX,768</code></a> <br>
                 </p>
             </div>
 
-            <!-- Country name endpoint section -->
-            <div class="overflow-hidden content-section" id="content-country-name">
-                <h1>country name</h1>
+            <!-- Subdivision endpoint section -->
+             <div class="overflow-hidden content-section" id="content-subdivision">
+                <h2>Subdivision</h2>
                 <p>
-                    The /country_name endpoint returns all the subdivision data attribute values for a country according to its name as it is commonly known in English. A comma 
-                    separated list of country names can also be input. <br> <br>
-                    <code style="padding-right: 10px;" class="higlighted break-word">https://iso3166-2-api.vercel.app/api/country_name/{country_name}</code> 
-                    <button style="cursor: pointer;" id="copy-text-btn3" data-api-url="https://iso3166-2-api.vercel.app/api/name/"><i class="fa fa-clone"></i></button> <br><br>
+                    The /api/subdivision endpoint returns all ISO 3166-2 subdivision data for an input subdivision code or name. A comma separated list of subdivision code can also be input. <br> <br>
+                    <code style="padding-right: 10px;" class="higlighted break-word">https://iso3166-2-api.vercel.app/api/subdivision/{input_subdivision}</code> 
+                    <!-- <button style="cursor: pointer;" id="copy-text-btn4" data-api-url="https://iso3166-2-api.vercel.app/api/subdivision/{input_subdivision}"><i class="fa fa-clone"></i></button> <br><br> -->
+                    <button style="cursor: pointer; position: relative;" id="copy-text-btn4" data-api-url="https://iso3166-2-api.vercel.app/api/subdivision/{input_subdivision}" onclick="copyToClipboard(this)"> 
+                    <i class="fa fa-clone"></i>
+                        <span class="tooltip-text">Copied!</span>
+                    </button> <br><br>                    
+                    <a href="https://iso3166-2-api.vercel.app/api/subdivision/GB-ABC" target="_blank"><code style="padding-right: 10px;" class="higlighted break-word">https://iso3166-2-api.vercel.app/api/subdivision/GB-ABC</code></a> <br>
+                    <a href="https://iso3166-2-api.vercel.app/api/subdivision/US-VA, US-WY" target="_blank"><code style="padding-right: 10px;" class="higlighted break-word">https://iso3166-2-api.vercel.app/api/subdivision/US-VA,US-WY</code></a> <br>
+                    <a href="https://iso3166-2-api.vercel.app/api/subdivision/CZ-642,CZ-805" target="_blank"><code style="padding-right: 10px;" class="higlighted break-word">https://iso3166-2-api.vercel.app/api/subdivision/CZ-642,CZ-805</code></a> <br>
+                    <a href="https://iso3166-2-api.vercel.app/api/subdivision/AU-NSW,AU-WA,AU-VIC" target="_blank"><code style="padding-right: 10px;" class="higlighted break-word">https://iso3166-2-api.vercel.app/api/subdivision/AU-NSW,AU-WA,AU-VIC</code></a> <br>
+                </p>
+            </div> 
+            
+            <!-- Search endpoint section -->
+            <div class="overflow-hidden content-section" id="content-search">
+                <h2>Search</h2>
+                <p>
+                    The /api/search endpoint returns all subdivision data to a country/territory that contain the sought search terms in their subdivision code, name or local/other name
+                    attributes. A comma separated list of search terms can also be input. By default the API will look for an exact match, but the % of likeness to the input search terms 
+                    found in the subdivision data can be amended via the 'likeness' query string parameter, lowering this value will expand the search space for the terms; a value between 
+                    0 and 100 is accepted. Additionally you can pass in the 'excludeMatchScore' parameter which will exclude the 'Match Score' attribute from the search results which 
+                    conveys the % match the subdivision object names are to the input search terms; the outputs will be sorted alphabetically by country code in this case. By default the 
+                    output will be sorted by % match descending. <br><br>
+                    <code style="padding-right: 10px;" class="higlighted break-word">https://iso3166-2-api.vercel.app/api/search/{input_search_term}</code>
+                    <!-- <button style="cursor: pointer;" id="copy-text-btn7" data-api-url="https://iso3166-2-api.vercel.app/api/search/{input_search_term}"><i class="fa fa-clone"></i></button> <br><br> -->
+                    <button style="cursor: pointer; position: relative;" id="copy-text-btn7" data-api-url="https://iso3166-2-api.vercel.app/api/search/{input_search_term}" onclick="copyToClipboard(this)"> 
+                    <i class="fa fa-clone"></i>
+                        <span class="tooltip-text">Copied!</span>
+                    </button> <br><br> 
+                    <a href="https://iso3166-2-api.vercel.app/api/search/Kingston" target="_blank"><code style="padding-right: 10px;" class="higlighted break-word">https://iso3166-2-api.vercel.app/api/search/Kingston</code></a> <br>
+                    <a href="https://iso3166-2-api.vercel.app/api/search/Kyoto,JP,13,愛知県" target="_blank"><code style="padding-right: 10px;" class="higlighted break-word">https://iso3166-2-api.vercel.app/api/search/Kyoto,JP-13,愛知県</code></a> <br>
+                    <a href="https://iso3166-2-api.vercel.app/api/search/Western?likeness=80" target="_blank"><code style="padding-right: 10px;" class="higlighted break-word">https://iso3166-2-api.vercel.app/api/search/western?likeness=80</code></a> <br>
+                    <a href="https://iso3166-2-api.vercel.app/api/search/Yorkshire?filter=name,localOtherName,type" target="_blank"><code style="padding-right: 10px;" class="higlighted break-word">https://iso3166-2-api.vercel.app/api/search/Yorkshire?filter=name,localOtherName,type</code></a> <br>
+                    <a href="https://iso3166-2-api.vercel.app/api/search/new york,new jerey,new hampshire?excludeMatchScore=0" target="_blank"><code style="padding-right: 10px;" class="higlighted break-word">https://iso3166-2-api.vercel.app/api/search/new york,new jersey,new hampshire?excludeMatchScore=0</code></a> <br>
+                    <a href="https://iso3166-2-api.vercel.app/api/search/Wakanda" target="_blank"><code style="padding-right: 10px;" class="higlighted break-word">https://iso3166-2-api.vercel.app/api/search/Wakanda</code></a> <br>
+                </p>
+            </div>
+
+            <!-- Name endpoint section -->
+             <div class="overflow-hidden content-section" id="content-country-name">
+                <h2>Country Name</h2>
+                <p>
+                    The /api/country_name endpoint returns all ISO 3166-2 subdivision data for a country/territory via its country name, as it 
+                    is commonly known in English. A comma separated list of country names can also be input. <br> <br>
+                    <code style="padding-right: 10px;" class="higlighted break-word">https://iso3166-2-api.vercel.app/api/country_name/{input_country_name}</code> 
+                    <!-- <button style="cursor: pointer;" id="copy-text-btn4" data-api-url="https://iso3166-2-api.vercel.app/api/country_name/{input_country_name}"><i class="fa fa-clone"></i></button> <br><br> -->
+                    <button style="cursor: pointer; position: relative;" id="copy-text-btn4" data-api-url="https://iso3166-2-api.vercel.app/api/country_name/{input_country_name}" onclick="copyToClipboard(this)"> 
+                    <i class="fa fa-clone"></i>
+                        <span class="tooltip-text">Copied!</span>
+                    </button> <br><br>                    
                     <a href="https://iso3166-2-api.vercel.app/api/country_name/Ireland" target="_blank"><code style="padding-right: 10px;" class="higlighted break-word">https://iso3166-2-api.vercel.app/api/country_name/Ireland</code></a> <br>
                     <a href="https://iso3166-2-api.vercel.app/api/country_name/Jamaica" target="_blank"><code style="padding-right: 10px;" class="higlighted break-word">https://iso3166-2-api.vercel.app/api/country_name/Jamaica</code></a> <br>
-                    <a href="https://iso3166-2-api.vercel.app/api/country_name/Panama,Rwanda,Zambia" target="_blank"><code style="padding-right: 10px;" class="higlighted break-word">https://iso3166-2-api.vercel.app/api/country_name/Panama,Rwanda,Zambia</code></a>
+                    <a href="https://iso3166-2-api.vercel.app/api/country_name/Panama,Rwanda,Zambia" target="_blank"><code style="padding-right: 10px;" class="higlighted break-word">https://iso3166-2-api.vercel.app/api/country_name/Panama,Rwanda,Zambia</code></a> <br>
                 </p>
-            </div>
-
-            <!-- Subdivision code endpoint section -->
-            <div class="overflow-hidden content-section" id="content-subdivision-code">
-                <h1>Subdivision Code</h1>
-                <p>
-                    The /subdivision endpoint returns all the subdivision data for the inputted subdivision, according to its ISO 3166-2 subdivision code. A comma separated
-                    list of codes can also be input. <br><br>
-                    <code style="padding-right: 10px;" class="higlighted break-word">https://iso3166-2-api.vercel.app/api/subdivision/{subdivision}</code>
-                    <button style="cursor: pointer;" id="copy-text-btn2" data-api-url="https://iso3166-2-api.vercel.app/api/subdivision/"><i class="fa fa-clone"></i></button> <br><br>
-                    <a href="https://iso3166-2-api.vercel.app/api/subdivision/GB-ABD" target="_blank"><code style="padding-right: 10px;" class="higlighted break-word">https://iso3166-2-api.vercel.app/api/subdivision/GB-ABD</code></a> <br>
-                    <a href="https://iso3166-2-api.vercel.app/api/subdivision/LV-041" target="_blank"><code style="padding-right: 10px;" class="higlighted break-word">https://iso3166-2-api.vercel.app/api/subdivision/LV-041</code></a> <br>
-                    <a href="https://iso3166-2-api.vercel.app/api/subdivision/UZ-NG,UZ-TK,UZ-XO" target="_blank"><code style="padding-right: 10px;" class="higlighted break-word">https://iso3166-2-api.vercel.app/api/subdivision/UZ-NG,UZ-TK,UZ-XO</code></a>
-                </p>
-            </div>
-
-            <!-- Subdivision name endpoint section -->
-            <div class="overflow-hidden content-section" id="content-subdivision-name">
-                <h1>subdivision name</h1>
-                <p>
-                    The /name endpoint returns all the subdivision data attribute values for a country according to its subdivision name, as it is commonly known in English. A comma 
-                    separated list of subdivision names can also be input. This endpoint also has the <i>likeness score</i> (`?likeness=`) query string parameter that can be appended to the URL. 
-                    This can be set between 1 - 100, representing a % of likeness to the input name the return subdivisions should be, e.g: a likeness score of 90 will return fewer 
-                    potential matches whose name only match to a high degree compared to a score of 10 which will create a larger search space, thus returning more potential subdivision 
-                    matches. A default likeness of 100 (exact match) is used, if no match found then this is reduced to 90. <br> <br>
-                    <code style="padding-right: 10px;" class="higlighted break-word">https://iso3166-2-api.vercel.app/api/name/{input_subdivision_name}</code> 
-                    <button style="cursor: pointer;" id="copy-text-btn3" data-api-url="https://iso3166-2-api.vercel.app/api/name/"><i class="fa fa-clone"></i></button> <br><br>
-                    <a href="https://iso3166-2-api.vercel.app/api/name/Satakunta" target="_blank"><code style="padding-right: 10px;" class="higlighted break-word">https://iso3166-2-api.vercel.app/api/name/Satakunta</code></a> <br>
-                    <a href="https://iso3166-2-api.vercel.app/api/name/Cavan?likeness=70" target="_blank"><code style="padding-right: 10px;" class="higlighted break-word">https://iso3166-2-api.vercel.app/api/name/Cavan?likeness=70</code></a> <br>
-                    <a href="https://iso3166-2-api.vercel.app/api/name/Goiás,Paraíba,São Paulo" target="_blank"><code style="padding-right: 10px;" class="higlighted break-word">https://iso3166-2-api.vercel.app/api/name/Goiás,Paraíba,São Paulo</code></a>
-                </p>
-            </div>
-
-            <!-- Subdivision codes list endpoint section -->
+            </div> 
+    
             <div class="overflow-hidden content-section" id="content-list-subdivisions">
-                <h1>list subdivision codes</h1>
+                <h2>List Subdivisions</h2>
                 <p>
-                    The /list_subdivisions endpoint returns all the subdivision codes for all countries. <br> <br>
-                    <code style="padding-right: 10px;" class="higlighted break-word">https://iso3166-2-api.vercel.app/api/list_subdivisions</code> 
-                    <button style="cursor: pointer;" id="copy-text-btn3" data-api-url="https://iso3166-2-api.vercel.app/api/list_subdivisions/"><i class="fa fa-clone"></i></button> <br><br>
-                    <!-- <a href="https://iso3166-2-api.vercel.app/api/list_subdivisions" target="_blank"><code style="padding-right: 10px;" class="higlighted break-word">https://iso3166-2-api.vercel.app/api/list_subdivisions</code></a> <br> -->
+                    The /api/list_subdivisions endpoint returns all ISO 3166-2 subdivision codes for all countries/territories. The list of countries supported is according 
+                    to the <a href="https://en.wikipedia.org/wiki/List_of_ISO_3166_country_codes" target="_blank">ISO 3166-1 standard</a>. You can also pass in a specific
+                    country to get its subdivision codes from via its alpha-2, alpha-3 or numeric country codes. <br><br>
+                    <code style="padding-right: 10px;" class="higlighted break-word">https://iso3166-2-api.vercel.app/api/list_subdivisions</code>
+                    <!-- <button style="cursor: pointer;" id="copy-text-btn2" data-api-url="https://iso3166-2-api.vercel.app/api/list_subdivisions"><i class="fa fa-clone"></i></button> -->
+                    <button style="cursor: pointer; position: relative;" id="copy-text-btn2" data-api-url="https://iso3166-2-api.vercel.app/api/list_subdivisions" onclick="copyToClipboard(this)">
+                    <i class="fa fa-clone"></i>
+                    <span class="tooltip-text">Copied!</span>
+                    </button> <br><br>
+                    <a href="https://iso3166-2-api.vercel.app/api/list_subdivisions" target="_blank"><code style="padding-right: 10px;" class="higlighted break-word">https://iso3166-2-api.vercel.app/api/list_subdivisions</code></a> <br>
+                    <a href="https://iso3166-2-api.vercel.app/api/list_subdivisions/MA" target="_blank"><code style="padding-right: 10px;" class="higlighted break-word">https://iso3166-2-api.vercel.app/api/list_subdivisions/MA</code></a> <br>
+                    <a href="https://iso3166-2-api.vercel.app/api/list_subdivisions/US" target="_blank"><code style="padding-right: 10px;" class="higlighted break-word">https://iso3166-2-api.vercel.app/api/list_subdivisions/US</code></a> <br>
+                    <a href="https://iso3166-2-api.vercel.app/api/list_subdivisions/ZA" target="_blank"><code style="padding-right: 10px;" class="higlighted break-word">https://iso3166-2-api.vercel.app/api/list_subdivisions/ZA</code></a> <br>
+                    <a href="https://iso3166-2-api.vercel.app/api/list_subdivisions/SK" target="_blank"><code style="padding-right: 10px;" class="higlighted break-word">https://iso3166-2-api.vercel.app/api/list_subdivisions/SK</code></a> <br>
                 </p>
             </div>
-            
+
+
             <!-- Contributing section-->
             <div class="overflow-hidden content-section" id="content-contributing">
                 <h1>Contributing</h1>
                 <p>
-                    Contributions, enhancements or feedback to the software and or API are more than welcome! You can raise an Issue or make a pull request on the <a href="https://github.com/amckenna41/iso3166-2" target="_blank">GitHub Repo</a> or
+                    Contributions, enhancements or feedback to the software and or API are more than welcome! You can raise an Issue or make a pull request on the <a href="https://github.com/amckenna41/iso3166-2-api">GitHub Repo</a> or
                     email <a href= "mailto: amckenna41@qub.ac.uk">amckenna41@qub.ac.uk</a>.
                 </p>
             </div>
@@ -255,7 +277,7 @@
             <div class="overflow-hidden content-section" id="content-credits">
                 <h1>Credits</h1>
                 <p>
-                    The Python software and accompanying API were solely developed by <a href="https://github.com/amckenna41/" target="_blank">me</a> : ). 
+                    The Python software and accompanying API are solely developed and maintained by <a href="https://github.com/amckenna41/" target="_blank">me</a> : ). 
                 </p>
             </div>
 

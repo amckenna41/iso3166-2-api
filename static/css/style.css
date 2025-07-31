@@ -47,6 +47,35 @@ body{
     -webkit-backface-visibility: hidden;
     font-family: 'Roboto', sans-serif;
 }
+
+.theme-toggle {
+    position: fixed;
+    top: 10px;
+    right: 76px;
+    background: none;
+    border: 1px solid currentColor;
+    border-radius: 5px;
+    padding: 5px 10px;
+    cursor: pointer;
+    z-index: 10000; /* Bring the button to the front */
+    display: None;
+}
+
+.theme-toggle:hover {
+    background: #0056b3;
+    box-shadow: 0 0 5px 2px rgba(255, 255, 255, 0.4); /* Add white glow */
+    color: #fff; /* Keep text white */
+}
+
+body.dark-theme {
+    background-color: #121212;
+    color: #ffffff;
+}
+
+body.dark-theme a {
+    color: #00a8e3; /* Adjust link color for better visibility in dark mode */
+}
+
 strong{
     font-weight: 500;
 }
@@ -379,7 +408,7 @@ html.menu-opened .burger-menu-icon  .line3 {
     stroke-width: 6;
 }
 
-/* copu icon and tooltip */
+/* copu icon and tooltip
 .tooltip {
     position: relative;
     display: inline-block;
@@ -395,10 +424,39 @@ html.menu-opened .burger-menu-icon  .line3 {
     border-radius: 6px;
     padding: 5px 0;
   
-    /* Position the tooltip */
+    /* Position the tooltip 
     position: absolute;
     z-index: 1;
-  }
+  } */
+
+.tooltip-text {
+  visibility: hidden;
+  background-color: #4caf50;
+  color: white;
+  text-align: center;
+  border-radius: 4px;
+  padding: 4px 8px;
+  position: absolute;
+  z-index: 1;
+  bottom: 125%; /* above the button */
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 0.8em;
+  white-space: nowrap;
+  opacity: 0;
+  transition: opacity 0.3s;
+}
+
+button:focus .tooltip-text,
+button:active .tooltip-text {
+  visibility: visible;
+  opacity: 1;
+}
+
+.tooltip-text.show {
+  visibility: visible;
+  opacity: 1;
+}
 
 /* ONE CONTENT COLUMN VERSION
 ----------------------------------------------------------------------------------------*/

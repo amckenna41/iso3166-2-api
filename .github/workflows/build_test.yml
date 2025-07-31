@@ -28,7 +28,7 @@ jobs:
             os: [ubuntu-latest]
             python-version: ["3.10"]   #testing on multiple python versions
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
     - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@v3
       with:
@@ -58,7 +58,7 @@ jobs:
             os: [ubuntu-latest]
             python-version: ["3.10"]   #testing on multiple python versions
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
     - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@v3
       with:
@@ -103,7 +103,7 @@ jobs:
     steps:
       #checkout repo
       - name: Checkout repo
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       # install all required modules and dependancies using pip installation
       - name: Install dependencies

@@ -4,18 +4,39 @@ import iso3166
 from iso3166_2 import *
 import re
 from thefuzz import fuzz, process
+from urllib.parse import unquote
 from unidecode import unidecode
+from functools import lru_cache
 
 ########################################################### Endpoints ###########################################################
-
-# /api - main homepage for API, displaying purpose, examples and documentation
-# /api/all - return all subdivision data for all countries
-# /api/alpha/<input_alpha> - return all subdivision data for input country using its ISO 3166-1 alpha-2, alpha-3 or numeric codes  
-# /api/subdivision/<input_subdivision> - return subdivision data for input subdivision using its subdivision code             
-# /api/name/<input_subdivision_name> - return all subdivision data for input subdivision using its subdivision name    
-# /api/country_name/<input_country_name> - return all subdivision data for input country using its country name                        
-
+'''
+/api - main homepage for API, displaying purpose, examples and documentation
+/api/all - return all subdivision data for all countries
+/api/alpha/<input_alpha> - return all subdivision data for input country using its ISO 3166-1 alpha-2, alpha-3 or numeric codes  
+/api/subdivision/<input_subdivision> - return subdivision data for input subdivision using its subdivision code             
+/api/country_name/<input_country_name> - return all subdivision data for input country using its country name                        
+/api/search/<input_search_term> - return all subdivision data for input subdivision name or search term    
+/api/list_subdivisions/<input_alpha_code> - return all subdivision codes for ALL or a subset of countries
+'''
 #################################################################################################################################
+
+
+################################################### Query String Parameters ###################################################
+'''
+likeness- this is a value between 1 and 100 that increases or reduces the % of similarity/likeness that the inputted search terms 
+have to match to the subdivision data in the subdivision code, name and local/other name attributes. This can be used with the 
+/api/search and /api_country_name endpoints. Having a higher value should return more exact and less total matches and having 
+a lower value will return less exact but more total matches, e.g /api/search/Paris?likeness=50, 
+/api/country_name/Tajikist?likeness=90 (default=100).
+filterAttributes - this is a list of the default supported attributes that you want to include in the output. By default all attributes 
+will be returned but this parameter is useful if you only require a subset of attributes, e.g api/alpha/DEU?filter=latLng,flag, 
+api/subdivision/PL-02?filter=localOtherName.
+excludeMatchScore - this allows you to exclude the matchScore attribute from the search results when using the /api/search endpoint. 
+The match score is the % of a match each returned subdivision data object is to the search terms, with 100% being an exact match. By 
+default the match score is returned for each object, e.g /api/search/Bucharest?excludeMatchScore=1, 
+/api/search/Oregon?excludeMatchScore=1 (default=0).
+'''
+###############################################################################################################################
 
 #initialise Flask app
 app = Flask(__name__)
@@ -27,18 +48,25 @@ app.url_map.strict_slashes = False
 error_message = {}
 error_message["status"] = 400
 
-#get all subdivision data from the ISO 3166-2 package
-iso3166_2_instance = ISO3166_2()
-all_iso3166_2 = iso3166_2_instance.all
+#list of supported attributes
+all_attributes = ["name", "localOtherName", "type", "parentCode", "flag", "latLng", "history"]
 
-# print(f"Using version {iso3166_2_instance.__version__} of ISO 3166-2 software.")
+@lru_cache()
+def get_subdivision_instance():
+    """ Cache function for initialization of Subdivisions instance. """
+    return Subdivisions()
+
+@lru_cache()
+def get_all_subdivisions():
+    """ Cache function for all data variable of Subdivisions instance. """
+    return get_subdivision_instance().all
 
 @app.route('/')
 @app.route('/api')
 def home() -> str:
     """
     Default route for https://iso3166-2-api.vercel.app/. Main homepage for API displaying the 
-    purpose of API and its documentation. Route can accept path with or without trailing slash.
+    purpose of API and its documentation. 
 
     Parameters
     ==========
@@ -56,8 +84,7 @@ def home() -> str:
 def all() -> tuple[dict, int]:
     """
     Flask route for '/api/all' path/endpoint. Return all ISO 3166-2 subdivision data 
-    attributes and values for all countries. Route can accept path with or without 
-    trailing slash.
+    attributes and values for all countries.
 
     Parameters
     ==========
@@ -71,17 +98,32 @@ def all() -> tuple[dict, int]:
         response status code. 200 is a successful response, 400 means there was an 
         invalid parameter input. 
     """  
-    return jsonify(all_iso3166_2), 200
+    #parse filter query string param
+    filter_param = request.args.get('filter')
 
-@app.route('/api/alpha/<alpha>', methods=['GET'])
-@app.route('/alpha/<alpha>', methods=['GET'])
-@app.route('/api/alpha', methods=['GET'])
+    #set path url for error message object
+    error_message['path'] = request.url
+
+    #get cached subdivision data
+    all_iso3166_2_ = get_all_subdivisions()
+
+    #filter out attributes from filter query parameter, if applicable 
+    if not (filter_param is None):
+        all_iso3166_2_ = filter_attributes(filter_param, get_all_subdivisions())
+        if (all_iso3166_2_ == -1):
+            return jsonify(create_error_message(f"Invalid attribute name input to filter query string parameter: {filter_param}. Refer to the list of supported attributes: {", ".join(all_attributes)}.", request.url)), 400   
+
+    return jsonify(all_iso3166_2_), 200
+
 @app.route('/alpha', methods=['GET'])
-def api_alpha(alpha="") -> tuple[dict, int]:
+@app.route('/api/alpha', methods=['GET'])
+@app.route('/api/alpha/<input_alpha>', methods=['GET'])
+@app.route('/alpha/<input_alpha>', methods=['GET'])
+def api_alpha(input_alpha: str="") -> tuple[dict, int]:
     """
     Flask route for '/api/alpha' path/endpoint. Return all ISO 3166-2 subdivision data for the 
     country with the inputted ISO 3166-1 alpha-2, alpha-3 or numeric code/codes. If invalid alpha 
-    code or no value input then return error. Route can accept path with or without trailing slash.
+    code or no value input then return error.
 
     Parameters
     ==========
@@ -97,90 +139,50 @@ def api_alpha(alpha="") -> tuple[dict, int]:
         response status code. 200 is a successful response, 400 means there was an 
         invalid parameter input.
     """
-    #initialise vars
+    #initialise object to store output
     iso3166_2 = {}
-    alpha_code = []
 
+    #if no input alpha parameter then return error message
+    if (input_alpha == ""):
+        return jsonify(create_error_message("The ISO 3166-1 alpha input parameter cannot be empty.", request.url)), 400    
+    
     #set path url for error message object
-    error_message['path'] = request.base_url
-
-    #sort and uppercase all alpha codes, remove any unicode spaces (%20) and split into comma separated list
-    alpha_code = sorted(alpha.upper().replace(' ', '').replace('%20', '').split(','))
+    error_message['path'] = request.url
     
-    #if no input parameters set then raise and return error
-    if (alpha_code == ['']):
-        error_message["message"] = "The alpha input parameter cannot be empty."
-        return jsonify(error_message), 400
+    #remove unicode spacing from input alpha code if applicable
+    input_alpha = input_alpha.replace("%20", '')
 
-    def convert_to_alpha2(alpha_code):
-        """ 
-        Convert an ISO 3166 country's 3 letter alpha-3 code or numeric code into its 
-        2 letter alpha-2 counterpart. 
+    #get the country subdivision data using the input alpha codes from the Subdivisions class, return error if invalid codes input
+    try:
+        iso3166_2 = get_subdivision_instance()[input_alpha]
+    except ValueError as ve:
+        return jsonify(create_error_message(str(ve), request.url)), 400   
 
-        Parameters 
-        ==========
-        :alpha_code: str
-            3 letter ISO 3166 alpha-3 country code or numeric code.
-        
-        Returns
-        =======
-        :iso3166.countries_by_alpha3[alpha3_code].alpha2/iso3166.countries_by_numeric[alpha_code].alpha2: str
-            2 letter alpha-2 ISO 3166 country code. 
-        """
-        if (alpha_code.isdigit()):
-            #return error if numeric code not found
-            if not (alpha_code in list(iso3166.countries_by_numeric.keys())):
-                return None
-            else:
-                #use iso3166 package to find corresponding alpha-2 code from its numeric code
-                return iso3166.countries_by_numeric[alpha_code].alpha2
-    
-        #return error if 3 letter alpha-3 code not found
-        if not (alpha_code in list(iso3166.countries_by_alpha3.keys())):
-            return None
-        else:
-            #use iso3166 package to find corresponding alpha-2 code from its alpha-3 code
-            return iso3166.countries_by_alpha3[alpha_code].alpha2
+    #parse filter query string param
+    filter_param = request.args.get('filter')
 
-    #iterate over each input alpha codes, convert to equivalent alpha-2 codes if applicable, return error if invalid code
-    for code in range(0, len(alpha_code)):
-        #api can accept alpha-3 or numeric codes for country, this has to be converted into its alpha-2 counterpart
-        if (len(alpha_code[code]) == 3):
-            temp_code = convert_to_alpha2(alpha_code[code])
-            #return error message if invalid numeric code input
-            if (temp_code is None and alpha_code[0].isdigit()):
-                error_message["message"] = f"Invalid ISO 3166-1 numeric country code input, cannot convert into corresponding alpha-2 code: {''.join(alpha_code[code])}."
-                return jsonify(error_message), 400
-            #return error message if invalid alpha-3 code input
-            if (temp_code is None):
-                error_message["message"] = f"Invalid ISO 3166-1 alpha-3 country code input, cannot convert into corresponding alpha-2 code: {''.join(alpha_code[code])}."
-                return jsonify(error_message), 400
-            alpha_code[code] = temp_code
-        #use regex to validate format of alpha-2 codes - if invalid then return error
-        if not (bool(re.match(r"^[A-Z]{2}$", alpha_code[code]))) or (alpha_code[code] not in list(iso3166.countries_by_alpha2.keys())):
-            error_message["message"] = f"Invalid ISO 3166-1 alpha country code input, cannot convert into corresponding alpha-2 code: {''.join(alpha_code[code])}."
-            return jsonify(error_message), 400
+    #filter out attributes from filter query parameter, if applicable 
+    if not (filter_param is None):
+        iso3166_2 = filter_attributes(filter_param, iso3166_2)
+        if (iso3166_2 == -1):
+            return jsonify(create_error_message(f"Invalid attribute name input to filter query string parameter: {filter_param}. Refer to the list of supported attributes: {", ".join(all_attributes)}.", request.url)), 400   
 
-    #get subdivision data from iso3166_2 object per country using alpha-2 code
-    for code in alpha_code:
-        iso3166_2[code] = all_iso3166_2[code]
-    
     return jsonify(iso3166_2), 200
 
-@app.route('/api/subdivision/<subd>', methods=['GET'])
-@app.route('/subdivision/<subd>', methods=['GET'])
+@app.route('/api/subdivision/<input_subdivision>', methods=['GET'])
+@app.route('/subdivision/<input_subdivision>', methods=['GET'])
 @app.route('/api/subdivision', methods=['GET'])
 @app.route('/subdivision', methods=['GET'])
-def api_subdivision(subd="") -> tuple[dict, int]:    
+def api_subdivision(input_subdivision="") -> tuple[dict, int]:    
     """
     Flask route for '/api/subdivision' path/endpoint. Return all ISO 3166-2 subdivision data 
     for the inputted subdivision, according to its ISO 3166-2 code. A comma separated list of 
     subdivision codes can also be input. If invalid subdivision code or no value input then 
-    return error. Route can accept path with or without trailing slash.
+    return error.
 
     Parameters
     ==========
-    :subd: str/list (default="")
+    :input_subdivision: str (default="")
         ISO 3166-2 subdivision code or list of codes.
 
     Returns
@@ -193,66 +195,78 @@ def api_subdivision(subd="") -> tuple[dict, int]:
     """
     #initialise vars
     iso3166_2 = {}
-    subd_code = []
+    subdivision_code = []
 
     #set path url for error message object
-    error_message['path'] = request.base_url
+    error_message['path'] = request.url
 
-    #get list of all available subdivision codes
+    #get list of all available subdivision codes via the cached Subdivisions class instance
     all_iso3166_2_codes = []
-    for country in all_iso3166_2:
-        for subd_code in all_iso3166_2[country]:
-            all_iso3166_2_codes.append(subd_code)
+    for country in get_all_subdivisions():
+        for subdivision_code in get_all_subdivisions()[country]:
+            all_iso3166_2_codes.append(subdivision_code)
+
+    #if no input subdivision parameter then return error message
+    if (input_subdivision == ""):
+        return jsonify(create_error_message("The Subdivision input parameter cannot be empty.", request.url)), 400    
             
     #sort and uppercase all subdivision codes, remove any unicode spaces (%20)
-    subd_code = sorted([subd.upper().replace(' ','').replace('%20', '')])
+    subdivision_code = sorted([input_subdivision.upper().replace(' ','').replace('%20', '')])
     
-    #if no input parameters set then return error
-    if (subd_code == ['']):
-        error_message["message"] = "The subdivision input parameter cannot be empty."
-        return jsonify(error_message), 400
-
     #if first element in subdivision list is comma separated list of codes, split into actual array of comma separated codes
-    if (',' in subd_code[0]):
-        subd_code = subd_code[0].split(',')
-        subd_code = [code.strip() for code in subd_code]
+    if (',' in subdivision_code[0]):
+        subdivision_code = subdivision_code[0].split(',')
+        subdivision_code = [code.strip() for code in subdivision_code]
 
     #iterate over each subdivision code and validate its format and check if exists in dataset, if not then return error
-    for subd in range(0, len(subd_code)):
-        if not (bool(re.match(r"^[A-Z]{2}-[A-Z0-9]{1,3}$", subd_code[subd]))):
-            error_message["message"] = "All subdivision codes must be in the format XX-Y, XX-YY or XX-YYY: {}.".format(subd_code[subd])
-            return jsonify(error_message), 400
-        if (subd_code[subd] not in all_iso3166_2_codes):
-            error_message["message"] = f"Subdivision code {subd_code[subd]} not found in list of available subdivisions for {subd_code[subd].split('-')[0]}."
-            return jsonify(error_message), 400
+    for subd in subdivision_code:
+        #return error if input subdivision not in correct format
+        if not re.match(r"^[A-Z]{2}-[A-Z0-9]{1,3}$", subd):
+            return jsonify(create_error_message(f"All subdivision codes must be in the format XX-Y, XX-YY or XX-YYY, got {subd}.", request.url)), 400
+        
+        #return error if invalid subdivision input
+        if subd not in all_iso3166_2_codes:
+            return jsonify(create_error_message(f"Subdivision code {subd} not found in list of available subdivisions for {subd.split('-')[0]}.", request.url)), 400
 
-        #create empty country object for country subdivision data, if code is valid, using subdivision code as key
-        if not (subd_code in all_iso3166_2_codes):
-            iso3166_2[subd_code[subd]] = {}
+        #add country code as parent key for nested subdivision objects
+        cc = subd.split('-')[0]
+        iso3166_2.setdefault(cc, {})[subd] = get_all_subdivisions()[cc][subd]
 
-        #add respective subdivision data to object
-        iso3166_2[subd_code[subd]]= all_iso3166_2[subd_code[subd].split('-')[0]][subd_code[subd]]
+    #parse filter query string param
+    filter_param = request.args.get('filter')
+
+    #filter out attributes from filter query parameter, if applicable 
+    if not (filter_param is None):
+        iso3166_2 = filter_attributes(filter_param, iso3166_2)
+        if (iso3166_2 == -1):
+            return jsonify(create_error_message(f"Invalid attribute name input to filter query string parameter: {filter_param}. Refer to the list of supported attributes: {", ".join(all_attributes)}.", request.url)), 400
 
     return jsonify(iso3166_2), 200
 
-@app.route('/api/name/<subdivision_name>', methods=['GET'])
-@app.route('/name/<subdivision_name>', methods=['GET'])
-@app.route('/api/name', methods=['GET'])
-@app.route('/name', methods=['GET'])
-def api_subdivision_name(subdivision_name="") -> tuple[dict, int]:
+@app.route('/api/search/<input_search_term>', methods=['GET'])
+@app.route('/search/<input_search_term>', methods=['GET'])
+@app.route('/api/search', methods=['GET'])
+@app.route('/search', methods=['GET'])
+def api_search(input_search_term: str="") -> tuple[dict, int]:
     """
-    Flask route for '/api/name' path/endpoint. Return all ISO 3166-2 subdivision data attributes and 
-    values for inputted subdivision name/names. When searching for the sought subdivision name, a 
-    fuzzy search algorithm is used via "thefuzz" package that finds the exact match within the 
+    Flask route for '/api/search' path/endpoint. Return all ISO 3166-2 subdivision data attributes and 
+    values for inputted subdivision name/names or search terms. When searching for the sought subdivision,
+    a fuzzy search algorithm is used via "thefuzz" package that finds the exact match within the 
     dataset, if this returns nothing then the dataset is searched for subdivision names that match 
-    90% or more, the first match will then be returned. If no matching subdivision name found or 
-    input is empty then return an error. Route can accept path with or without trailing slash.
+    90% or more, the first match will then be returned. The value for this search parameter can be 
+    changed via the 'likeness' query string parameter, which outlines the percentage likeness the 
+    subdivision parameters have to be to the input search terms, decreasing the likeness will increase
+    the search space. If no matching subdivision name found or input is empty then return an error. 
 
-    **mention likeenss parameter here
+    By default, the Match Score attribute will be returned but not included for each search results, 
+    which represents the % match that the search results are to the input search terms. If you want 
+    to include this attribute from the search results then set the query string parameter 
+    excludeMatchScore to 0.
+
     Parameters
     ==========
-    :subdivision_name: str/list (default="")
-        one or more subdivision names as they are commonly known in English. 
+    :input_search_term: str/list (default="")
+        one or more sought search terms.
 
     Returns
     =======
@@ -262,157 +276,62 @@ def api_subdivision_name(subdivision_name="") -> tuple[dict, int]:
         response status code. 200 is a successful response, 400 means there was an 
         invalid parameter input. 
     """
-    #if no input parameters set then raise and return error
-    if (subdivision_name == ""):
-        error_message["message"] = "The subdivision name input parameter cannot be empty."
-        error_message['path'] = request.url
-        return jsonify(error_message), 400
+    #if no input parameters set then return error message
+    if (input_search_term == ""):
+        return jsonify(create_error_message("The search input parameter cannot be empty.", request.url)), 400 
     
-    def is_float(string):
-        """ Return if input is float or not - used for search likeness query string parameter. """
-        try: 
-            float(string) 
-            return True 
-        except ValueError: 
-            return False
+    #remove all whitespace & unicode characters
+    search_terms = unquote(input_search_term).replace("%20", '')
     
     #parse likeness query string param, used as a % cutoff for likeness of subdivision names, raise error if invalid type or value input
-    search_likeness = request.args.get('likeness')
-    if not (search_likeness is None):
-        if not (is_float(search_likeness)):
-            error_message["message"] = "Likeness query string parameter value must be between 0 - 1 or 1 - 100: {}.".format(search_likeness)
-            error_message['path'] = request.url
-            return jsonify(error_message), 400   
-        if (float(search_likeness) > 1 and float(search_likeness) <= 100): #divide input by 100 if % value input
-            search_likeness = float(search_likeness) / 100 
-        if (float(search_likeness) < 0):
-            error_message["message"] = "Likeness query string parameter value must be between 0 - 1 or 1 - 100, got value: {}.".format(search_likeness)
-            error_message['path'] = request.url
-            return jsonify(error_message), 400   
-        else:
-            search_likeness = float(search_likeness)
+    try:
+        search_likeness_score = int(request.args.get('likeness', default="100").rstrip('/'))
+    except ValueError:
+        return jsonify(create_error_message("Likeness query string parameter must be an integer between 0 and 100.", request.url)), 400 
 
-    #decode any unicode or accent characters using utf-8 encoding, lower case and remove additional whitespace
-    subdivision_name_ = unidecode(unquote_plus(subdivision_name).lower().replace(' ', ''))
+    #raise error if likeness score isn't between 0 and 100
+    if not (0 <= search_likeness_score <= 100):
+        return jsonify(create_error_message("Likeness query string parameter value must be between 0 and 100.", request.url)), 400 
 
-    #object to store the subdivision name and its corresponding alpha-2 code and subdivision code (name: alpha_2, code: subd_code)
-    all_subdivision_names = {}
+    #parse query string parameter that allows user to include the Matching % score from search results, by default it is excluded in results
+    exclude_match_score = (request.args.get('excludeMatchScore') or request.args.get('excludematchscore') or "true").lower().rstrip('/') in ['true', '1', 'yes']
 
-    #list to store all subdivision names for all countries
-    all_subdivision_names_list = []
+    #call search function in iso3166-updates package, passing in likeness score & excludeMatchScore parameters, by default also search over the localOtherName attribute
+    search_results = get_subdivision_instance().search(search_terms, likeness_score=search_likeness_score, exclude_match_score=exclude_match_score, local_other_name_search=True)
 
-    #list of subdivision names with comma in them from dataset, required if multiple subdivision names are input e.g - Murcia, Regiónde, Newry, Mourne and Down
-    subdivision_name_exceptions = []
+    #return message that no search results were found
+    if not search_results:
+        return jsonify({"Message": f"No matching subdivision data found with the given search term(s): {search_terms}. Try using the query string parameter '?likeness' and reduce the likeness score to expand the search space, '?likeness=30' will return subdivision data that have a 30% match to the input name. The current likeness score is set to {search_likeness_score}."}), 200
 
-    #separate list to keep track if any of input subdivision names are exceptions (have comma in them)
-    subdivision_name_exceptions_input = []
+    #parse filter query string param
+    filter_param = request.args.get('filter')
 
-    #iterate over all ISO 3166-2 subdivision data, appending each subdivision's name, country code and 
-    #subdivision code to object that will be used to search through, lowercase, remove whitespace and any accents and special characters,
-    #if a comma is in the official subdivision name then append to the exception list only if comma is in input parameter
-    for alpha_2 in all_iso3166_2:
-        for subd in all_iso3166_2[alpha_2]:
+    #filter out attributes from filter query parameter, if applicable 
+    if not (filter_param is None):
+        filtered_subdivisions = filter_attributes(filter_param, search_results, exclude_match_score)
+        if (filtered_subdivisions == -1):
+            return jsonify(create_error_message(f"Invalid attribute name input to filter query string parameter: {filter_param}. Refer to the following list of supported attributes: {", ".join(all_attributes)}.", request.url)), 400 
+        
+        #set filtered attributes object to that of the returned search results
+        search_results = filtered_subdivisions
 
-            #append object of the subdivision's alpha-2 code and subdivision code with its name as the key
-            if not (unidecode(all_iso3166_2[alpha_2][subd]["name"].lower().replace(' ', '')) in list(all_subdivision_names.keys())):
-                all_subdivision_names[unidecode(unquote_plus(all_iso3166_2[alpha_2][subd]["name"]).lower().replace(' ', ''))]  = []
-                all_subdivision_names[unidecode(unquote_plus(all_iso3166_2[alpha_2][subd]["name"]).lower().replace(' ', ''))].append({"alpha2": alpha_2, "code": subd})
-            else:
-                all_subdivision_names[unidecode(unquote_plus(all_iso3166_2[alpha_2][subd]["name"]).lower().replace(' ', ''))].append({"alpha2": alpha_2, "code": subd})
+    return jsonify(search_results), 200
 
-            #append subdivision name to list of subdivision names for searching
-            all_subdivision_names_list.append(unidecode(unquote_plus(all_iso3166_2[alpha_2][subd]["name"]).lower().replace(' ', '')))
-
-            #if comma in official subdivision name, append to the exception list, which is needed if a comma separated list of names are input
-            if (',' in subdivision_name_):
-                if (',' in unidecode(all_iso3166_2[alpha_2][subd]["name"].lower().replace(' ', ''))):
-                    subdivision_name_exceptions.append(unidecode(all_iso3166_2[alpha_2][subd]["name"].lower().replace(' ', '')))      
-                    
-    #only execute subdivision name exception code if comma is in input param
-    if (',' in subdivision_name_):
-        #sort exceptions list alphabetically 
-        subdivision_name_exceptions.sort()
-
-        #temp var to track input subdivision name 
-        temp_subdivision_name = subdivision_name_
-
-        #iterate over all subdivision names exceptions (those with a comma in them), append to separate list if input param is one
-        for sub_name in subdivision_name_exceptions:
-            if (sub_name in temp_subdivision_name):
-                subdivision_name_exceptions_input.append(sub_name)
-                #remove current subdivision name from temp var, strip of commas
-                subdivision_name_ = temp_subdivision_name.replace(sub_name, '').strip(',')
-
-    #sort all subdivision names codes
-    subdivision_names = sorted([subdivision_name_])
-    
-    #split multiple subdivision names into list
-    subdivision_names = subdivision_names[0].split(',')
-
-    #extend subdivision names list if any subdivision name exceptions are present in input param
-    if (subdivision_name_exceptions_input != []):
-        subdivision_names.extend(subdivision_name_exceptions_input)
-
-    #object to keep track of matching subdivisions and their data
-    output_subdivisions =  {}
-
-    #list of matching subdivision names
-    subdivision_name_matches = []
-    
-    #iterate over all input subdivision names, and find matching subdivision in data object, using thefuzz library
-    for subdiv in subdivision_names: 
-
-        #using thefuzz library, get all subdivisions that match the input subdivision names
-        all_subdivision_name_matches = process.extract(subdiv, all_subdivision_names_list, scorer=fuzz.ratio) #partial_ratio
-
-        #iterate over all found subdivision matches, look for exact matches, if none found then look for ones that have likeness score>=90
-        for match in all_subdivision_name_matches:
-            #use default likeness score of 100 (exact) followed by 90 if no exact matches found
-            if (search_likeness != "" and search_likeness == None):
-                if (match[1] == 100):
-                    subdivision_name_matches.append(match[0])
-                    break #exact match found so break to next iteration
-                elif (match[1] >= 90):
-                    subdivision_name_matches.append(match[0])
-            #using a custom likeness score according to input query parameter
-            else:
-                if (match[1] >= search_likeness * 100):
-                    subdivision_name_matches.append(match[0])
-
-        #iterate over all subdivision name matches and get corresponding subdivision object from dataset
-        for subd in range(0, len(subdivision_name_matches)): 
-            for obj in range(0, len(all_subdivision_names[subdivision_name_matches[subd]])):
-                #create temp object for subdivision and its data attributes, with its subdivision code as key
-                subdivision = all_iso3166_2[all_subdivision_names[subdivision_name_matches[subd]][obj]["alpha2"]][all_subdivision_names[subdivision_name_matches[subd]][obj]["code"]]
-                #append subdivision data and its attributes to the output object
-                output_subdivisions[all_subdivision_names[subdivision_name_matches[subd]][obj]["code"]] = subdivision
-
-    #return error if no matching subdivisions found from input name    
-    if (output_subdivisions == {}):
-        error_message["message"] = "No valid subdivision found for input name: {}. Try using the query string parameter '?likeness' and reduce the likeness score to expand the"\
-            " search space, e.g '?likeness=0.3' will return subdivisions that have a 30% match to the input name.".format(subdivision_name)
-        error_message['path'] = request.url
-        return jsonify(error_message), 400  
-
-    #return object of matching subdivisions and their data
-    else:
-        return jsonify(output_subdivisions), 200
-
-@app.route('/api/country_name/<country_name>', methods=['GET'])
-@app.route('/country_name/<country_name>', methods=['GET'])
+@app.route('/api/country_name/<input_country_name>', methods=['GET'])
+@app.route('/country_name/<input_country_name>', methods=['GET'])
 @app.route('/api/country_name', methods=['GET'])
 @app.route('/country_name', methods=['GET'])
-def api_country_name(country_name="") -> tuple[dict, int]:
+def api_country_name(input_country_name="") -> tuple[dict, int]:
     """
     Flask route for '/api/country_name' path/endpoint. Return all ISO 3166-2 subdivision data attributes and 
     values for inputted country name/names. A closeness function is used on the input country name 
     to get the closest match, to a high degree, from the list of available countries, e.g if Swede 
     is input then the data for Sweden will be returned. Return error if invalid country name or no name 
-    parameter input. Route can accept path with or without trailing slash.
+    parameter input. 
 
     Parameters
     ==========
-    :country_name: str/list (default="")
+    :input_country_name: str/list (default="")
         one or more country names as they are commonly known in English. 
 
     Returns
@@ -429,15 +348,14 @@ def api_country_name(country_name="") -> tuple[dict, int]:
     names = []
 
     #decode any unicode or accent characters using utf-8 encoding, lower case and remove additional whitespace
-    name = unidecode(unquote_plus(country_name)).replace('%20', ' ').title()
+    name = unidecode(unquote_plus(input_country_name)).replace('%20', ' ').title()
 
-    #set path for current request url 
-    error_message['path'] = request.base_url
+    #set path url for error message object
+    error_message['path'] = request.url
 
     #if no input parameters set then return error message
     if (name == ""):
-        error_message["message"] = "The country name input parameter cannot be empty."
-        return jsonify(error_message), 400
+        return jsonify(create_error_message("The country name input parameter cannot be empty.", request.url)), 400   
 
     #path can accept multiple country names, separated by a comma but several
     #countries contain a comma already in their name. If multiple country names input,  
@@ -513,27 +431,40 @@ def api_country_name(country_name="") -> tuple[dict, int]:
                 break
             else:
                 #return error if country name not found
-                error_message["message"] = "Invalid country name input: {}.".format(name)
-                return jsonify(error_message), 400                
+                return jsonify(create_error_message(f"Invalid country name input: {name}.", request.url)), 400             
 
         #use iso3166 package to find corresponding alpha-2 code from its name
         alpha2_code.append(iso3166.countries_by_name[name_matches[0].upper()].alpha2)
     
     #get country data from ISO 3166-2 object, using alpha-2 code
     for code in alpha2_code:
-        iso3166_2[code] = all_iso3166_2[code]
+        iso3166_2[code] = get_all_subdivisions()[code]
+
+    #parse filter query string param
+    filter_param = request.args.get('filter')
+
+    #filter out attributes from filter query parameter, if applicable 
+    if not (filter_param is None):
+        iso3166_2 = filter_attributes(filter_param, iso3166_2)
+        if (iso3166_2 == -1):
+            return jsonify(create_error_message(f"Invalid attribute name input to filter query string parameter: {filter_param}. Refer to the list of supported attributes: {", ".join(all_attributes)}.", request.url)), 400             
 
     return jsonify(iso3166_2), 200
 
 @app.route('/api/list_subdivisions', methods=['GET'])
 @app.route('/list_subdivisions', methods=['GET'])
-def api_list_subdivisions() -> tuple[dict, int]:
+@app.route('/api/list_subdivisions/<input_alpha>', methods=['GET'])
+@app.route('/list_subdivisions/<input_alpha>', methods=['GET'])
+def api_list_subdivisions(input_alpha: str="") -> tuple[dict, int]:
     """
     Flask route for '/api/list_subdivisions' path/endpoint. Return all ISO 3166 country codes and 
-    a list of just their subdivision codes. Route can accept path with or without trailing slash.
+    a list of just their subdivision codes. A comma separated list of individual ISO 3166 country
+    codes can also be input.
     
     Parameters
     ==========
+    :input_alpha: str (default="")
+        2 letter alpha-2, 3 letter alpha-3 or numeric ISO 3166-1 country codes or list of codes.
 
     Returns
     =======
@@ -545,13 +476,24 @@ def api_list_subdivisions() -> tuple[dict, int]:
     """
     iso3166_2 = {}
 
-    #iterate through each country code, append its subdivisions to export object
-    for country in all_iso3166_2:
-        iso3166_2[country] = []
-        for subdivision in all_iso3166_2[country]:
-            print("iso3166_2[country]", iso3166_2[country])
-            print("subdivision",subdivision)
-            iso3166_2[country].append(subdivision)
+    #set path url for error message object
+    error_message['path'] = request.url
+
+    #remove unicode spacing from input alpha code if applicable
+    input_alpha = input_alpha.replace("%20", '')
+
+    if (input_alpha == ""):
+        #iterate through each country code, append its subdivisions to export object
+        for country in get_all_subdivisions():
+            iso3166_2[country] = []
+            for subdivision in get_all_subdivisions()[country]:
+                iso3166_2[country].append(subdivision)
+    else:
+        #get the country subdivision data using the input alpha codes, return error if invalid codes input
+        try:
+            iso3166_2 = get_subdivision_instance().subdivision_codes(input_alpha)
+        except ValueError as ve:
+            return jsonify(create_error_message(str(ve), request.url)), 400   
 
     return jsonify(iso3166_2), 200
 
@@ -583,6 +525,85 @@ def not_found(e) -> tuple[dict, int]:
             alpha_endpoint_message="Searching using a country's subdivision name should use the /name endpoint."), 404
     
     return render_template("404.html", path=request.url), 404
+    
+def filter_attributes(filter_list: str, filtered_iso3166_2: dict, exclude_match_score: bool=1) -> dict|int:
+    """
+    Filter out attributes in ISO 3166-2 subdivision dataset not listed in filter 
+    query string parameter. Validate each attribute input to the query string. 
+
+    Parameters
+    ==========
+    :filter_list: str
+        list of attributes to include for each subdivision.
+    :filtered_iso3166_2: dict
+        object of subdivision data to be filtered per attribute.
+    :exclude_match_score: bool (default=1)
+        exclude the % match score from the output.
+
+    Returns
+    =======
+    :filtered_iso3166_2/-1: dict/int
+        object of filtered subdivision data. If no attribute value input then the 
+        same object data is returned. Or -1 if in an invalid attribute is input to 
+        query parameter. 
+    """
+    #split attributes into comma separated list, remove any whitespace
+    filter_list = filter_list.replace(' ', '').split(',')
+
+    #temp var for editing list
+    temp_filter = filter_list
+    
+    #iterate over each attribute in filtered list, return error if invalid attribute input
+    for attr in filter_list:
+        #return all attributes if wildcard symbol input
+        if (attr == "*"):
+            temp_filter = all_attributes
+            break 
+        if (not attr in all_attributes and attr != ''):
+            return -1
+    
+    filter_list = temp_filter
+
+    #recursive function that recursively removes any unwanted attributes per subdivision object
+    def filter_dict(d, attributes_to_keep):
+        if isinstance(d, dict):
+            return {k: filter_dict(v, attributes_to_keep) for k, v in d.items() if k in attributes_to_keep or isinstance(v, dict)}
+        elif isinstance(d, list):
+            return [filter_dict(i, attributes_to_keep) for i in d]
+        else:
+            return d
+    
+    #if the Match score and its attributes are to be included in output, add them to filter list
+    if not (exclude_match_score):
+        filter_list.extend(["matchScore", "countryCode", "subdivisionCode"])
+
+    #return all data as is if no filter value input
+    if (filter_list != ['']):
+        #keep only the specified attributes 
+        filtered_iso3166_2 = filter_dict(filtered_iso3166_2, set(filter_list))
+    
+    return filtered_iso3166_2
+
+def create_error_message(message: str, path: str, status: int = 400) -> dict:
+    """ Helper function that returns error message when one occurs in Flask app. """
+    return {"message": message, "path": path, "status": status}
+
+@app.route('/clear-cache')
+@app.route('/api/clear-cache')
+def clear_cache():
+    """ Clear cache of Subdivisions class instance and all cached subdivision data. Mainly used for dev. """
+    get_subdivision_instance.cache_clear()
+    get_all_subdivisions.cache_clear()
+    return 'Cache cleared'
+
+@app.route('/version')
+@app.route('/api/version')
+def get_version():
+    """ Get the current version of the iso3166-2 being used by the API. Mainly used for dev. """
+    return get_subdivision_instance().__version__
+
+# def handler(environ, start_response):
+#     return app(environ, start_response)
 
 if __name__ == '__main__':
     #run Flask app 
