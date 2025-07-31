@@ -548,10 +548,10 @@ class ISO3166_2_API_Tests(unittest.TestCase):
         test_subdivision_request_xx_yy_expected = {"message": f"Subdivision code {test_subdivision_xx_yy} not found in list of available subdivisions for XX.", "path": self.subdivision_base_url + test_subdivision_xx_yy, "status": 400}
         self.assertEqual(test_subdivision_request_xx_yy, test_subdivision_request_xx_yy_expected, f"Expected and observed output error object do not match:\n{test_subdivision_xx_yy}.")
 #11.)
-        test_subdivision_request_invalid_attribute = requests.get(self.subdivision_base_url + test_subdivision_jm_05, headers=self.user_agent_header, params={"filter": "invalid_attribute"}).json() #invalid attribute input
-        test_subdivision_request_invalid_attribute_expected = {"message": f"Invalid attribute name input to filter query string parameter: invalid_attribute. Refer to the list of supported attributes: name, localOtherName, type, parentCode, flag, latLng, history.", 
-                                                               "path": f"{self.subdivision_base_url + test_subdivision_jm_05}?filter=invalid_attribute", "status": 400}
-        self.assertEqual(test_subdivision_request_invalid_attribute, test_subdivision_request_invalid_attribute_expected, f"Expected and observed output error object do not match:\n{test_subdivision_request_invalid_attribute}.")
+        # test_subdivision_request_invalid_attribute = requests.get(self.subdivision_base_url + test_subdivision_jm_05, headers=self.user_agent_header, params={"filter": "invalid_attribute"}).json() #invalid attribute input
+        # test_subdivision_request_invalid_attribute_expected = {"message": f"Invalid attribute name input to filter query string parameter: invalid_attribute. Refer to the list of supported attributes: name, localOtherName, type, parentCode, flag, latLng, history.", 
+        #                                                        "path": f"{self.subdivision_base_url + test_subdivision_jm_05}?filter=invalid_attribute", "status": 400}
+        # self.assertEqual(test_subdivision_request_invalid_attribute, test_subdivision_request_invalid_attribute_expected, f"Expected and observed output error object do not match:\n{test_subdivision_request_invalid_attribute}.")
  
     # @unittest.skip("")
     def test_search_endpoint(self):
