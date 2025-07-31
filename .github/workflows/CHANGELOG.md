@@ -41,6 +41,7 @@
 - The filter query string parameter appended to the list_subdivisions endpoint was returning incorrect attributes, it's now ignored if it's appended
 - Error when /name endpoint when no int/float value for likeness parameter is input, an error message should be returned rather than sever error
 - Fixed issue with API execution being slow due to loading in the subdivision data each tine, solved by implementing LRU caching wrapper
+- Fixed deprecated upload-artefact error in github workflow
 
 ## 1.5.4 - March 2024
 

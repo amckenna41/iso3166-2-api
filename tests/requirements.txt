@@ -1,0 +1,10 @@
+iso3166
+iso3166-2>=1.7.2
+requests
+fake_useragent
+BeautifulSoup4
+pytest 
+pytest-cov 
+bandit
+safety 
+codecov 
