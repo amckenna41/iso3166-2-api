@@ -3,6 +3,7 @@ iso3166-2>=1.7.2
 requests
 fake_useragent
 BeautifulSoup4
+jsonschema
 pytest 
 pytest-cov 
 bandit
