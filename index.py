@@ -144,7 +144,7 @@ def api_alpha(input_alpha: str="") -> tuple[dict, int]:
 
     #if no input alpha parameter then return error message
     if (input_alpha == ""):
-        return jsonify(create_error_message("The ISO 3166-1 alpha input parameter cannot be empty.", request.url)), 400    
+        return jsonify(create_error_message("The ISO 3166-1 alpha input parameter cannot be empty. Please pass in at least one alpha country code.", request.url)), 400    
     
     #set path url for error message object
     error_message['path'] = request.url
@@ -208,7 +208,7 @@ def api_subdivision(input_subdivision="") -> tuple[dict, int]:
 
     #if no input subdivision parameter then return error message
     if (input_subdivision == ""):
-        return jsonify(create_error_message("The Subdivision input parameter cannot be empty.", request.url)), 400    
+        return jsonify(create_error_message("The Subdivision input parameter cannot be empty. Please pass in at least one subdivision code.", request.url)), 400    
             
     #sort and uppercase all subdivision codes, remove any unicode spaces (%20)
     subdivision_code = sorted([input_subdivision.upper().replace(' ','').replace('%20', '')])
@@ -278,7 +278,7 @@ def api_search(input_search_term: str="") -> tuple[dict, int]:
     """
     #if no input parameters set then return error message
     if (input_search_term == ""):
-        return jsonify(create_error_message("The search input parameter cannot be empty.", request.url)), 400 
+        return jsonify(create_error_message("The search input parameter cannot be empty. Please pass in at least one search term.", request.url)), 400 
     
     #remove all whitespace & unicode characters
     search_terms = unquote(input_search_term).replace("%20", '')
@@ -355,7 +355,7 @@ def api_country_name(input_country_name="") -> tuple[dict, int]:
 
     #if no input parameters set then return error message
     if (name == ""):
-        return jsonify(create_error_message("The country name input parameter cannot be empty.", request.url)), 400   
+        return jsonify(create_error_message("The country name input parameter cannot be empty. Please pass in at least one country name.", request.url)), 400   
 
     #path can accept multiple country names, separated by a comma but several
     #countries contain a comma already in their name. If multiple country names input,  

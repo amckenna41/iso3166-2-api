@@ -16,10 +16,11 @@
 
 > Frontend RESTful API for the [`iso3166-2`](https://github.com/amckenna41/iso3166-2) software and repo that returns a plethora of bespoke, valuable and useful attributes for the >5000 subdivisions/regions for all countries in the ISO 3166-2 standard. Built using the Python Flask framework and hosted on the Vercel platform.
 
-The main API homepage and documentation is available via the URL: <b>[https://iso3166-2-api.vercel.app/api](https://iso3166-2-api.vercel.app/api)</b>
+**The main API homepage and documentation is available via the URL: <b>[https://iso3166-2-api.vercel.app/api](https://iso3166-2-api.vercel.app/api)</b>**
 
 Quick Start 🏃
 --------------
+* The API is available here [here](https://iso3166-2-api.vercel.app/api)
 * Source code for main `iso3166-2` software package is available [here][iso3166_2_repo]
 * A <b>demo</b> of the software and API is available [here][demo]
 * A <b>Medium</b> article that dives deeper into `iso3166-2` is available [here][medium]
@@ -47,7 +48,7 @@ The full list of subdivision data attributes supported are:
 * **Parent Code** - subdivision parent code
 * **Type** - subdivision type, e.g. region, state, canton, parish etc
 * **Latitude/Longitude** - subdivision coordinates
-* **Flag** - subdivision flag from [`iso3166-flag-icons`](https://github.com/amckenna41/iso3166-flag-icons) repo; this is another ISO 3166 related custom-built dataset of over **3500** regional/subdivision flags
+* **Flag** - subdivision flag from [`iso3166-flags`](https://github.com/amckenna41/iso3166-flags) repo; this is another ISO 3166 related custom-built dataset of over **3500** regional/subdivision flags
 * **History** - historical updates/changes to the subdivision code and naming conventions, as per the custom-built [`iso3166-updates`](https://github.com/amckenna41/iso3166-updates) repo.
 
 ## Bespoke Features
@@ -67,11 +68,11 @@ The full dataset of local/other names is available in the repo here [`local_othe
 
 
 ### Flags
-The other equally important and bespoke/unique attribute that the software package supports is the ``flag`` attribute, which is a link to the subdivision's flag on the [`iso3166-flag-icons`](https://github.com/amckenna41/iso3166-flag-icons) repo. This is another **custom-built** repository, (alongside [`iso3166-2`](https://github.com/amckenna41/iso3166-2) and [`iso3166-updates`](https://github.com/amckenna41/iso3166-updates)) that stores a rich and comprehensive dataset of over **3500** individual subdivision flags. 
+The other equally important and bespoke/unique attribute that the software package supports is the ``flag`` attribute, which is a link to the subdivision's flag on the [`iso3166-flags`](https://github.com/amckenna41/iso3166-flags) repo. This is another **custom-built** repository, (alongside [`iso3166-2`](https://github.com/amckenna41/iso3166-2) and [`iso3166-updates`](https://github.com/amckenna41/iso3166-updates)) that stores a rich and comprehensive dataset of over **3200** individual country and subdivision flags. 
 
 The flags repo uses the `iso3166-2` software to get the full list of ISO 3166-2 subdivision codes which is kept up-to-date and accurate via the `iso3166-updates` software. 
 
-   <div align="center">❤️ iso3166-2 🤝 iso3166-updates 🤝 iso3166-flag-icons ❤️</div>
+   <div align="center">❤️ iso3166-2 🤝 iso3166-updates 🤝 iso3166-flags ❤️</div>
    
 
 ### History
@@ -96,7 +97,7 @@ The list of ISO 3166 updates was last updated on <strong>June 2024</strong>. A l
 * [flask][flask] >= 2.3.2
 * [requests][requests] >= 2.28.1
 * [iso3166][iso3166] >= 2.1.1
-* [iso3166-2][iso3166_2] >= 1.7.2
+* [iso3166-2][iso3166_2] >= 1.8.0
 * [unidecode][unidecode] >= 1.3.8
 * [thefuzz][thefuzz] >= 0.22.1
 
@@ -112,14 +113,14 @@ Below are some of my other custom-built repositories that relate to the ISO 3166
 * [iso3166-2](https://github.com/amckenna41/iso3166-2):  a lightweight custom-built Python package that can be used to access all of the world's ISO 3166-2 subdivision data.  Currently, the package and API support subdivision data from **250** officially assigned code elements within the ISO 3166-1, with **200** of these countries having recognized subdivisions (50 entires have 0 subdivisions), totalling **5,049** subdivisions across the whole dataset.
 * [iso3166-updates](https://github.com/amckenna41/iso3166-update): software and accompanying RESTful API that checks for any updates/changes to the ISO 3166-1 and ISO 3166-2 country codes and subdivision naming conventions, as per the ISO 3166 newsletter (https://www.iso.org/iso-3166-country-codes.html) and Online Browsing Platform (OBP) (https://www.iso.org/obp/ui).
 * [iso3166-updates-api](https://github.com/amckenna41/iso3166-updates-api): frontend API for iso3166-updates.
-* [iso3166-flag-icons](https://github.com/amckenna41/iso3166-flag-icons): a comprehensive library of over 3500 country and regional flags from the ISO 3166-1 and ISO 3166-2 standards.
+* [iso3166-flags](https://github.com/amckenna41/iso3166-flags): a comprehensive library of over 3500 country and regional flags from the ISO 3166-1 and ISO 3166-2 standards.
 
 ## References
 \[1\]: ISO3166-1: https://en.wikipedia.org/wiki/ISO_3166-1 <br>
 \[2\]: ISO3166-2: https://en.wikipedia.org/wiki/ISO_3166-2 <br>
 \[3\]: ISO Country Codes Collection: https://www.iso.org/publication/PUB500001 <br>
 \[4\]: ISO Country Codes: https://www.iso.org/iso-3166-country-codes.html <br>
-\[5\]: ISO3166-2 flag-icons repo: https://github.com/amckenna41/iso3166-flag-icons <br>
+\[5\]: ISO3166-2 flags repo: https://github.com/amckenna41/iso3166-flags <br>
 
 ## Support
 [<img src="https://img.shields.io/github/stars/amckenna41/iso3166-2-api?color=green&label=star%20it%20on%20GitHub" width="132" height="20" alt="Star it on GitHub">](https://github.com/amckenna41/iso3166-2-api)
@@ -144,4 +145,4 @@ Below are some of my other custom-built repositories that relate to the ISO 3166
 [attributes]: https://github.com/amckenna41/iso3166-2-api/ATTRIBUTES.md 
 [api_md]: https://github.com/amckenna41/iso3166-2-api/API.md 
 [updates_md]: https://github.com/amckenna41/iso3166-2/blob/main/UPDATES.md
-[medium]: https://ajmckenna69.medium.com/iso3166-2-71a13d9157f7
+[medium]: hhttps://ajmckenna69.medium.com/iso-3166-2-software-and-api-for-accessing-world-regional-data-c85a7c511fbd

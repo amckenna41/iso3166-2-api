@@ -1,5 +1,5 @@
 iso3166
-iso3166-2>=1.7.2
+iso3166-2>=1.8.0
 requests
 fake_useragent
 BeautifulSoup4

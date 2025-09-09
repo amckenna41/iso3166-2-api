@@ -30,6 +30,7 @@
 - Updated all error return messages in API to use the create_error_message function
 - Programmatically get the Last Updated value on API homepage
 - Reordered sections in index.html
+- Updated all references of iso3166-flag-icons to iso3166-flags
 
 ### Fixed 
 - Scrolling functionality on main api index page not working
