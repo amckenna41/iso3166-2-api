@@ -9,6 +9,7 @@ from bs4 import BeautifulSoup
 import unittest
 unittest.TestLoader.sortTestMethodsUsing = None
 
+# @unittest.skip("")
 class ISO3166_2_API_Tests(unittest.TestCase):
     """
     Test suite for testing ISO 3166-2 api created to accompany the iso3166-2 Python software package. 
@@ -447,7 +448,7 @@ class ISO3166_2_API_Tests(unittest.TestCase):
         self.assertEqual(test_alpha_request_error2, test_alpha_request_error2_expected, f"Expected and observed output error object do not match:\n{test_alpha_request_error2}.")
 #11.)
         test_alpha_request_error3 = requests.get(self.alpha_base_url + test_alpha_error_3, headers=self.user_agent_header).json() #""
-        test_alpha_request_error3_expected = {"message": "The ISO 3166-1 alpha input parameter cannot be empty.", "path": self.alpha_base_url + test_alpha_error_3, "status": 400}
+        test_alpha_request_error3_expected = {"message": "The ISO 3166-1 alpha input parameter cannot be empty. Please pass in at least one alpha country code.", "path": self.alpha_base_url + test_alpha_error_3, "status": 400}
         self.assertEqual(test_alpha_request_error3, test_alpha_request_error3_expected, f"Expected and observed output error object do not match:\n{test_alpha_request_error3}.")
     
     # @unittest.skip("")
