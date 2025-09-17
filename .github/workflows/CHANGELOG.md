@@ -13,6 +13,7 @@
 - Query string parameter section added to the api homepage, including a quick description for the supported parameters
 - Added a dev only endpoint called '/clear-cache that clears the cached Subdivision class instance and any subdivision data
 - Added a dev only endpoint called /version that outputs the current version of the iso3166-2 software currently being used
+- Added Open API Swagger spec, file and endpoint
 
 ### Changed
 - Reorder credits and contributing section on api homepage

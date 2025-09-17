@@ -1,0 +1,299 @@
+openapi: 3.1.0
+info:
+  title: iso3166-2 API
+  version: "1.8.0"
+  description: |
+    REST API for ISO 3166-2 subdivision data (name, localOtherName, code, parentCode, type, latLng, flag, history).
+    Base URL serves docs; all routes below are relative to /api.
+servers:
+  - url: https://iso3166-2-api.vercel.app/api
+tags:
+  - name: Subdivisions
+  - name: Countries
+  - name: Search
+  - name: Utility
+components:
+  parameters:
+    FilterAttributes:
+      name: filterAttributes
+      in: query
+      description: Comma-separated list of attributes to include (e.g., `name,type,parentCode`).
+      required: false
+      schema: { type: string }
+    Likeness:
+      name: likeness
+      in: query
+      description: |
+        Similarity threshold (1–100). Higher returns fewer, more exact matches.
+        Applies to `/search/{input}` and `/country_name/{input}`.
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 100
+    ExcludeMatchScore:
+      name: excludeMatchScore
+      in: query
+      description: Exclude `matchScore` in `/search` results when truthy.
+      required: false
+      schema:
+        oneOf:
+          - type: boolean
+          - type: integer
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code: { type: string }
+            message: { type: string }
+          required: [code, message]
+      required: [error]
+    HistoryItem:
+      type: object
+      properties:
+        date:
+          type: string
+          format: date
+          example: "2024-11-29"
+        change:
+          type: string
+          example: "Name changed from 'Alūksnes novads' to 'Alūksne Municipality'."
+        source:
+          type: string
+          format: uri
+          example: "https://www.iso.org/obp/ui"
+    Subdivision:
+      type: object
+      properties:
+        code:
+          type: string
+          example: "FR-01"
+        name:
+          type: string
+          example: "Ain"
+        localOtherName:
+          oneOf:
+            - type: array
+              items: { type: string }
+            - type: object
+              additionalProperties:
+                type: array
+                items: { type: string }
+          example:
+            fra: ["Ain"]
+        parentCode:
+          type: [string, "null"]
+          example: null
+        type:
+          type: string
+          example: "metropolitan department"
+        latLng:
+          type: array
+          minItems: 2
+          maxItems: 2
+          items: { type: number }
+          example: [46.05, 5.35]
+        flag:
+          type: string
+          format: uri
+          example: "https://raw.githubusercontent.com/amckenna41/iso3166-flag-icons/main/flags/FR-01.svg"
+        history:
+          type: array
+          items: { $ref: "#/components/schemas/HistoryItem" }
+      required: [code, name, type]
+    SubdivisionWithScore:
+      allOf:
+        - $ref: "#/components/schemas/Subdivision"
+        - type: object
+          properties:
+            matchScore:
+              type: integer
+              minimum: 0
+              maximum: 100
+              example: 97
+
+paths:
+  /all:
+    get:
+      tags: [Countries]
+      summary: Get subdivision data for all countries
+      parameters:
+        - $ref: "#/components/parameters/FilterAttributes"
+      responses:
+        "200":
+          description: Country map of subdivision objects
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties:
+                  type: object
+                  description: Map of subdivisionCode -> Subdivision
+                  additionalProperties:
+                    $ref: "#/components/schemas/Subdivision"
+              example:
+                FR:
+                  FR-01: { code: "FR-01", name: "Ain", type: "metropolitan department" }
+                  FR-75: { code: "FR-75", name: "Paris", type: "metropolitan department" }
+                DE:
+                  DE-BE: { code: "DE-BE", name: "Berlin", type: "state" }
+        "400": { description: Bad request, invalid parameters, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+  /alpha/{input}:
+    get:
+      tags: [Countries]
+      summary: Get subdivision data by ISO 3166-1 code(s)
+      description: |
+        Accepts alpha-2, alpha-3, or numeric country codes. Comma-separated lists allowed (e.g. `FR,DEU,276`).
+      parameters:
+        - name: input
+          in: path
+          required: true
+          schema: { type: string }
+          example: "FR,DEU,276"
+        - $ref: "#/components/parameters/FilterAttributes"
+      responses:
+        "200":
+          description: Country map of subdivision objects
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties:
+                  type: object
+                  additionalProperties:
+                    $ref: "#/components/schemas/Subdivision"
+              example:
+                FR:
+                  FR-01: { code: "FR-01", name: "Ain", type: "metropolitan department" }
+                DE:
+                  DE-HE: { code: "DE-HE", name: "Hessen", type: "state" }
+        "400": { description: Invalid country code(s), content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+  /subdivision/{input}:
+    get:
+      tags: [Subdivisions]
+      summary: Get subdivision data by subdivision code(s)
+      description: Accepts one or more ISO 3166-2 subdivision codes, comma-separated (e.g. `LV-007,PA-3,ZA-NC`).
+      parameters:
+        - name: input
+          in: path
+          required: true
+          schema: { type: string }
+          example: "LV-007,PA-3,ZA-NC"
+        - $ref: "#/components/parameters/FilterAttributes"
+      responses:
+        "200":
+          description: Map of subdivisionCode -> Subdivision
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties:
+                  $ref: "#/components/schemas/Subdivision"
+              example:
+                "LV-007": { code: "LV-007", name: "Alūksne Municipality", type: "municipality" }
+                "PA-3":   { code: "PA-3",   name: "Colón",               type: "province" }
+        "400": { description: Invalid subdivision code(s), content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+  /country_name/{input}:
+    get:
+      tags: [Countries]
+      summary: Get subdivision data by country name(s)
+      description: |
+        Accepts one or more country names in English, comma-separated. Fuzzy matching controlled by `likeness`.
+      parameters:
+        - name: input
+          in: path
+          required: true
+          schema: { type: string }
+          example: "Tajikistan,Seychelles,Uganda"
+        - $ref: "#/components/parameters/Likeness"
+        - $ref: "#/components/parameters/FilterAttributes"
+      responses:
+        "200":
+          description: Country map of subdivision objects
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties:
+                  type: object
+                  additionalProperties:
+                    $ref: "#/components/schemas/Subdivision"
+              example:
+                TJ:
+                  TJ-DU: { code: "TJ-DU", name: "Dushanbe", type: "capital territory" }
+                SC:
+                  SC-01: { code: "SC-01", name: "Anse aux Pins", type: "district" }
+        "400": { description: Invalid or unmatched country name(s), content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+  /search/{input}:
+    get:
+      tags: [Search]
+      summary: Search subdivisions by name (fuzzy)
+      description: |
+        Accepts one or more subdivision names, comma-separated. Sorted by `matchScore` unless `excludeMatchScore` is truthy.
+      parameters:
+        - name: input
+          in: path
+          required: true
+          schema: { type: string }
+          example: "Saarland,Brokopondo,Delaware"
+        - $ref: "#/components/parameters/Likeness"
+        - $ref: "#/components/parameters/ExcludeMatchScore"
+        - $ref: "#/components/parameters/FilterAttributes"
+      responses:
+        "200":
+          description: Map of subdivisionCode -> Subdivision (optionally with matchScore)
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties:
+                  oneOf:
+                    - $ref: "#/components/schemas/SubdivisionWithScore"
+                    - $ref: "#/components/schemas/Subdivision"
+              example:
+                "DE-SL": { code: "DE-SL", name: "Saarland", type: "state", matchScore: 100 }
+                "SR-BR": { code: "SR-BR", name: "Brokopondo", type: "district", matchScore: 98 }
+                "US-DE": { code: "US-DE", name: "Delaware", type: "state", matchScore: 97 }
+        "400": { description: No matches or invalid input, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+  /list_subdivisions:
+    get:
+      tags: [Utility]
+      summary: List all subdivision codes per country
+      responses:
+        "200":
+          description: Map of country alpha-2 -> array of subdivision codes
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties:
+                  type: array
+                  items: { type: string }
+              example:
+                DE: ["DE-BB","DE-BE","DE-BW"]
+                OM: ["OM-BA","OM-DA","OM-MA"]
+                US: ["US-AL","US-AK","US-AZ"]
+  /list_subdivisions/{alpha}:
+    get:
+      tags: [Utility]
+      summary: List subdivision codes for a specific country
+      parameters:
+        - name: alpha
+          in: path
+          required: true
+          schema: { type: string }
+          example: "DE"
+      responses:
+        "200":
+          description: Array of subdivision codes for the given country
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { type: string }
+              example: ["DE-BB","DE-BE","DE-BW"]
+        "400": { description: Invalid country code, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }

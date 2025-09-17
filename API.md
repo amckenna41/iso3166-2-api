@@ -43,6 +43,7 @@ having a lower value will return less exact but more total matches, e.g ``/api/s
 ``/api/country_name/Tajikist?likeness=90`` (default=100).
 * **filterAttributes** - this is a list of the default supported attributes that you want to include in the output. By default all attributes will be returned but this parameter is useful if you only require a subset of attributes, e.g `api/alpha/DEU?filter=latLng,flag`, `api/subdivision/PL-02?filter=localOtherName`.
 * **excludeMatchScore** - this allows you to exclude the matchScore attribute from the search results when using the `/api/search endpoint`. The match score is the % of a match each returned subdivision data object is to the search terms, with 100% being an exact match. By default the match score is returned for each object, e.g `/api/search/Bucharest?excludeMatchScore=1`, ``/api/search/Oregon?excludeMatchScore=1`` (default=0).
+* **limit** - this allows you to limit the total number of countries returned from the API call. This is only available in the `/api/all` endpoint. When calling the endpoint, all of the available data is called so this param allows you to get a faster small subset of the data. The first X country subdivision data will be returned. 
 
 > A demo of the software and API is available [here][demo].
 

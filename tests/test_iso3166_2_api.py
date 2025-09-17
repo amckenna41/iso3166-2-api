@@ -133,6 +133,9 @@ class ISO3166_2_API_Tests(unittest.TestCase):
                 self.assertEqual(list(test_all_request_filter[alpha_code][subd].keys()), ["flag", "type"], 
                     f"Expected subdivision attributes to just include the flag attribute, got {list(test_all_request_filter[alpha_code][subd].keys())}.")
 #5.)
+        test_all_request_limit = requests.get(self.all_base_url, headers=self.user_agent_header, params={"limit": "10"}).json() #limiting to 10 countries
+        self.assertEqual(len(test_all_request_limit), 10, "Expected output object to contain 10 countries, got {len(test_all_request_limit)}.")
+#6.)
         # test_request_all_invalid_attribute = requests.get(self.all_base_url, headers=self.user_agent_header, params={"filter": "invalid_attribute"}).json() #invalid attribute input
         # test_request_all_invalid_attribute_expected = {"message": f"Invalid attribute name input to filter query string parameter: invalid_attribute. Refer to the list of supported attributes: name, localOtherName, type, parentCode, flag, latLng, history.", "path": f'{self.all_base_url}?filter=invalid_attribute', "status": 400}
         # self.assertEqual(test_request_all_invalid_attribute, test_request_all_invalid_attribute_expected, f"Expected and observed output error object do not match:\n{test_request_all_invalid_attribute}.")

@@ -134,6 +134,8 @@
                 <li><b>excludeMatchScore</b>: exclude the matchScore attribute from the search results when using the /api/search endpoint. The match score 
                     is the % of a match each returned subdivision data object is to the search terms, with 100% being an exact match. By default the match score 
                     is returned for each object, e.g /api/search/Bucharest?excludeMatchScore=1, /api/search/Oregon?excludeMatchScore=1 (default=0).</li>
+                <li><b>limit</b>: this allows you to limit the total number of countries returned from the API call. This is only available in the /api/all endpoint. 
+                    When calling the endpoint, all of the available data is called so this param allows you to get a faster small subset of the data. The first X country.
                 </ul>
                 </p>
             </div>
@@ -150,7 +152,9 @@
                 <h2>All</h2>
                 <p>
                     The /api/all endpoint returns all ISO 3166-2 subdivision data for all countries/territories. The list of countries supported is according 
-                    to the <a href="https://en.wikipedia.org/wiki/List_of_ISO_3166_country_codes" target="_blank">ISO 3166-1 standard</a>. <br><br>
+                    to the <a href="https://en.wikipedia.org/wiki/List_of_ISO_3166_country_codes" target="_blank">ISO 3166-1 standard</a>. The endpoint will
+                    return all data available but to limit the data and return the top X country data you can pass in the ?limit query string parameter e.g
+                    ?limit=100 will limit to the first 100 countries and their data. <br><br>
                     <code style="padding-right: 10px;" class="higlighted break-word">https://iso3166-2-api.vercel.app/api/all</code>
                     <!-- <button style="cursor: pointer;" id="copy-text-btn2" data-api-url="https://iso3166-updates.vercel.app/api/all"><i class="fa fa-clone"></i></button> -->
                     <button style="cursor: pointer; position: relative;" id="copy-text-btn2" data-api-url="https://iso3166-2-api.vercel.app/api/all" onclick="copyToClipboard(this)">

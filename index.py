@@ -1,4 +1,4 @@
-from flask import Flask, request, render_template, jsonify
+from flask import Flask, request, render_template, jsonify, send_from_directory
 from urllib.parse import unquote_plus
 import iso3166
 from iso3166_2 import *
@@ -17,6 +17,8 @@ from functools import lru_cache
 /api/country_name/<input_country_name> - return all subdivision data for input country using its country name                        
 /api/search/<input_search_term> - return all subdivision data for input subdivision name or search term    
 /api/list_subdivisions/<input_alpha_code> - return all subdivision codes for ALL or a subset of countries
+/api/version - get current version of iso3166-2 package being used by the API (mainly for dev)
+/api/clear-cache - clear the cached Subdivisions class instance and all cached subdivision data (mainly for dev)
 '''
 #################################################################################################################################
 
@@ -84,7 +86,9 @@ def home() -> str:
 def all() -> tuple[dict, int]:
     """
     Flask route for '/api/all' path/endpoint. Return all ISO 3166-2 subdivision data 
-    attributes and values for all countries.
+    attributes and values for all countries. You can filter the attributes returned 
+    using the 'filter' query string parameter and limit the number of countries 
+    returned using the 'limit' query string parameter.
 
     Parameters
     ==========
@@ -101,6 +105,9 @@ def all() -> tuple[dict, int]:
     #parse filter query string param
     filter_param = request.args.get('filter')
 
+    #parse limit parameter
+    limit_param = request.args.get('limit')
+
     #set path url for error message object
     error_message['path'] = request.url
 
@@ -112,6 +119,19 @@ def all() -> tuple[dict, int]:
         all_iso3166_2_ = filter_attributes(filter_param, get_all_subdivisions())
         if (all_iso3166_2_ == -1):
             return jsonify(create_error_message(f"Invalid attribute name input to filter query string parameter: {filter_param}. Refer to the list of supported attributes: {", ".join(all_attributes)}.", request.url)), 400   
+
+    #limit number of countries returned, if applicable due to large amount of country data
+    if not (limit_param is None):
+        try:
+            limit_param = int(limit_param)
+        except ValueError:
+            return jsonify(create_error_message("Limit query string parameter must be an integer.", request.url)), 400 
+
+        if (limit_param < 1):
+            return jsonify(create_error_message("Limit query string parameter must be greater than 0.", request.url)), 400 
+
+        #slice the dict to only return the number of countries specified in limit param
+        all_iso3166_2_ = dict(list(all_iso3166_2_.items())[:limit_param])
 
     return jsonify(all_iso3166_2_), 200
 
@@ -601,6 +621,11 @@ def clear_cache():
 def get_version():
     """ Get the current version of the iso3166-2 being used by the API. Mainly used for dev. """
     return get_subdivision_instance().__version__
+
+@app.get("/openapi.yaml")
+def openapi_yaml():
+    #display the Open API Swagger spec
+    return send_from_directory(os.path.dirname(os.path.abspath(__file__)), "openapi.yaml", mimetype="text/yaml")
 
 # def handler(environ, start_response):
 #     return app(environ, start_response)
