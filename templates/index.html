@@ -70,6 +70,7 @@
                 <li class="scroll-to-link" data-target="content-code" style="padding-left: 5%;"><a>Alpha Code</a></li>
                 <li class="scroll-to-link" data-target="content-subdivision" style="padding-left: 5%;"><a>Subdivision</a></li>
                 <li class="scroll-to-link" data-target="content-search" style="padding-left: 5%;"><a>Search</a></li>
+                <li class="scroll-to-link" data-target="content-search-geo" style="padding-left: 5%;"><a>Search Geo</a></li>
                 <li class="scroll-to-link" data-target="content-country-name" style="padding-left: 5%;"><a>Country Name</a></li>
                 <li class="scroll-to-link" data-target="content-list-subdivisions" style="padding-left: 5%;"><a>List Subdivisions</a></li>
                 <li class="scroll-to-link" data-target="content-contributing"><a>Contributing</a></li>
@@ -87,11 +88,11 @@
                 <h1>About</h1>
                 <p> 
                     The ISO 3166-2 API is a custom-built, open-source and free to use RESTful API wrapper for the <a href="https://github.com/amckenna41/iso3166-2" target="_blank">iso3166-2</a> repo 
-                    and dataset that stores the latest and most up-to-date ISO 3166-2 subdivision data for 5,049 subdivisions across ~250 countries/territories represented in the ISO 3166-2 standard. 
+                    and dataset that stores the latest and most up-to-date ISO 3166-2 subdivision data for 5,046 subdivisions across ~250 countries/territories represented in the ISO 3166-2 standard. 
                     The API supports supports a plethora of bespoke, informative and useful attributes and data, which are discussed further below.
                     <br><br>A demo of the API and Python software is available 
                     <a href="https://colab.research.google.com/drive/1btfEx23bgWdkUPiwdwlDqKkmUp1S-_7U?usp=sharing" target="_blank">here</a>.  
-                    <br>iso3166-2 software homepage is available
+                    <br>iso3166-2 software homepage/repo is available
                     <a href="https://github.com/amckenna41/iso3166-2" target="_blank">here</a>. 
                     <br> A Medium article is available <a href="https://ajmckenna69.medium.com/iso3166-2-71a13d9157f7" target="_blank">here</a>. <br>
                 </p>
@@ -119,7 +120,7 @@
             <div class="overflow-hidden content-section" id="content-query-string-parameters">
                 <h1>Query String Parameters</h1>
                 <p>
-                    There are three main query string parameters that can be passed through several of the endpoints of the API:
+                    There are four main query string parameters that can be passed through several of the endpoints of the API:
                     <ul style="color: #D6F0F0;">
                 <li><b>filter_attributes</b>: this parameter allows you to filter the outputs from the various endpoints by only including
                     a subset of the required attributes. A single attribute or comma separated list of attributes can be input.
@@ -135,7 +136,8 @@
                     is the % of a match each returned subdivision data object is to the search terms, with 100% being an exact match. By default the match score 
                     is returned for each object, e.g /api/search/Bucharest?excludeMatchScore=1, /api/search/Oregon?excludeMatchScore=1 (default=0).</li>
                 <li><b>limit</b>: this allows you to limit the total number of countries returned from the API call. This is only available in the /api/all endpoint. 
-                    When calling the endpoint, all of the available data is called so this param allows you to get a faster small subset of the data. The first X country.
+                    By default, when calling the /api/all endpoint, all of the available data is called so this param allows you to get a faster small subset of the data. 
+                    The endpoint accepts an integer value representing the total number of countries to return, e.g `/api/all?limit=10`, `/api/all?limit=50` etc.</li>
                 </ul>
                 </p>
             </div>
@@ -144,7 +146,7 @@
             <div class="overflow-hidden content-section" id="content-endpoints">
             <h1>Endpoints</h1>
             <p>
-                The ISO 3166-2 API currently has 6 main endpoints, /all, /alpha, /subdivision, /search, /country_name, and /list_subdivisions. A description of each along with a few examples are below.
+                The ISO 3166-2 API currently has 7 main endpoints, /all, /alpha, /subdivision, /search, /country_name, /list_subdivisions, and /search_geo. A description of each along with a few examples are below.
             </p>
             </div>
 
@@ -156,12 +158,12 @@
                     return all data available but to limit the data and return the top X country data you can pass in the ?limit query string parameter e.g
                     ?limit=100 will limit to the first 100 countries and their data. <br><br>
                     <code style="padding-right: 10px;" class="higlighted break-word">https://iso3166-2-api.vercel.app/api/all</code>
+                    <code style="padding-right: 10px;" class="higlighted break-word">https://iso3166-2-api.vercel.app/api/all?limit=50</code>
                     <!-- <button style="cursor: pointer;" id="copy-text-btn2" data-api-url="https://iso3166-updates.vercel.app/api/all"><i class="fa fa-clone"></i></button> -->
                     <button style="cursor: pointer; position: relative;" id="copy-text-btn2" data-api-url="https://iso3166-2-api.vercel.app/api/all" onclick="copyToClipboard(this)">
                     <i class="fa fa-clone"></i>
                     <span class="tooltip-text">Copied!</span>
                     </button>
-
                 </p>
             </div>
 
@@ -229,6 +231,23 @@
                 </p>
             </div>
 
+                <div class="overflow-hidden content-section" id="content-search-geo">
+            
+            <h2>Search Geo</h2>
+                <p>
+                    The /api/search_geo endpoint returns all subdivision data for subdivisions whose latitude/longitude coordinates are approximately equal to the input coordinates. 
+                    A comma separated lat,lng string must be input. You can optionally pass a ?radius parameter (in kilometers) to control the search radius; the default radius is 50 km. <br><br>
+                    <code style="padding-right: 10px;" class="higlighted break-word">https://iso3166-2-api.vercel.app/api/search_geo/{input_latlng}</code>
+                    <button style="cursor: pointer; position: relative;" id="copy-text-btn8" data-api-url="https://iso3166-2-api.vercel.app/api/search_geo/{input_latlng}" onclick="copyToClipboard(this)">
+                    <i class="fa fa-clone"></i>
+                        <span class="tooltip-text">Copied!</span>
+                    </button> <br><br>
+                    <a href="https://iso3166-2-api.vercel.app/api/search_geo/39.4178,-2.6232" target="_blank"><code style="padding-right: 10px;" class="higlighted break-word">https://iso3166-2-api.vercel.app/api/search_geo/39.4178,-2.6232</code></a> <br>
+                    <a href="https://iso3166-2-api.vercel.app/api/search_geo/-35.4884,149.0027" target="_blank"><code style="padding-right: 10px;" class="higlighted break-word">https://iso3166-2-api.vercel.app/api/search_geo/-35.4884,149.0027</code></a> <br>
+                    <a href="https://iso3166-2-api.vercel.app/api/search_geo/37.9567,-4.8477?radius=25" target="_blank"><code style="padding-right: 10px;" class="higlighted break-word">https://iso3166-2-api.vercel.app/api/search_geo/37.9567,-4.8477?radius=25</code></a> <br>
+                </p>
+            </div>
+
             <!-- Name endpoint section -->
              <div class="overflow-hidden content-section" id="content-country-name">
                 <h2>Country Name</h2>
@@ -266,7 +285,6 @@
                     <a href="https://iso3166-2-api.vercel.app/api/list_subdivisions/SK" target="_blank"><code style="padding-right: 10px;" class="higlighted break-word">https://iso3166-2-api.vercel.app/api/list_subdivisions/SK</code></a> <br>
                 </p>
             </div>
-
 
             <!-- Contributing section-->
             <div class="overflow-hidden content-section" id="content-contributing">

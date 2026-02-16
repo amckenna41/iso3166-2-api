@@ -1,12 +1,14 @@
 from flask import Flask, request, render_template, jsonify, send_from_directory
 from urllib.parse import unquote_plus
-import iso3166
 from iso3166_2 import *
 import re
+from pycountry import countries
 from thefuzz import fuzz, process
+import random
 from urllib.parse import unquote
 from unidecode import unidecode
 from functools import lru_cache
+from math import radians, sin, cos, sqrt, atan2
 
 ########################################################### Endpoints ###########################################################
 '''
@@ -17,8 +19,11 @@ from functools import lru_cache
 /api/country_name/<input_country_name> - return all subdivision data for input country using its country name                        
 /api/search/<input_search_term> - return all subdivision data for input subdivision name or search term    
 /api/list_subdivisions/<input_alpha_code> - return all subdivision codes for ALL or a subset of countries
+/api/coords - return subdivision data for input latitude and longitude coordinates
+/api/random - return a random subdivision from the dataset
 /api/version - get current version of iso3166-2 package being used by the API (mainly for dev)
 /api/clear-cache - clear the cached Subdivisions class instance and all cached subdivision data (mainly for dev)
+/api/search_geo/<input_latlng> - search subdivision data by approximate lat/lng (latLng attribute)
 '''
 #################################################################################################################################
 
@@ -62,6 +67,11 @@ def get_subdivision_instance():
 def get_all_subdivisions():
     """ Cache function for all data variable of Subdivisions instance. """
     return get_subdivision_instance().all
+
+@lru_cache()
+def get_alpha2_codes() -> set[str]:
+    """ Cache function for list of valid ISO 3166-1 alpha-2 country codes. """
+    return {c.alpha_2 for c in countries if hasattr(c, "alpha_2")}
 
 @app.route('/')
 @app.route('/api')
@@ -118,7 +128,7 @@ def all() -> tuple[dict, int]:
     if not (filter_param is None):
         all_iso3166_2_ = filter_attributes(filter_param, get_all_subdivisions())
         if (all_iso3166_2_ == -1):
-            return jsonify(create_error_message(f"Invalid attribute name input to filter query string parameter: {filter_param}. Refer to the list of supported attributes: {", ".join(all_attributes)}.", request.url)), 400   
+            return jsonify(create_error_message(f'Invalid attribute name input to filter query string parameter: {filter_param}. Refer to the list of supported attributes: {", ".join(all_attributes)}.', request.url)), 400   
 
     #limit number of countries returned, if applicable due to large amount of country data
     if not (limit_param is None):
@@ -185,7 +195,7 @@ def api_alpha(input_alpha: str="") -> tuple[dict, int]:
     if not (filter_param is None):
         iso3166_2 = filter_attributes(filter_param, iso3166_2)
         if (iso3166_2 == -1):
-            return jsonify(create_error_message(f"Invalid attribute name input to filter query string parameter: {filter_param}. Refer to the list of supported attributes: {", ".join(all_attributes)}.", request.url)), 400   
+            return jsonify(create_error_message(f'Invalid attribute name input to filter query string parameter: {filter_param}. Refer to the list of supported attributes: {", ".join(all_attributes)}.', request.url)), 400   
 
     return jsonify(iso3166_2), 200
 
@@ -259,7 +269,7 @@ def api_subdivision(input_subdivision="") -> tuple[dict, int]:
     if not (filter_param is None):
         iso3166_2 = filter_attributes(filter_param, iso3166_2)
         if (iso3166_2 == -1):
-            return jsonify(create_error_message(f"Invalid attribute name input to filter query string parameter: {filter_param}. Refer to the list of supported attributes: {", ".join(all_attributes)}.", request.url)), 400
+            return jsonify(create_error_message(f'Invalid attribute name input to filter query string parameter: {filter_param}. Refer to the list of supported attributes: {", ".join(all_attributes)}.', request.url)), 400
 
     return jsonify(iso3166_2), 200
 
@@ -330,12 +340,114 @@ def api_search(input_search_term: str="") -> tuple[dict, int]:
     if not (filter_param is None):
         filtered_subdivisions = filter_attributes(filter_param, search_results, exclude_match_score)
         if (filtered_subdivisions == -1):
-            return jsonify(create_error_message(f"Invalid attribute name input to filter query string parameter: {filter_param}. Refer to the following list of supported attributes: {", ".join(all_attributes)}.", request.url)), 400 
+            return jsonify(create_error_message(f'Invalid attribute name input to filter query string parameter: {filter_param}. Refer to the following list of supported attributes: {", ".join(all_attributes)}.', request.url)), 400 
         
         #set filtered attributes object to that of the returned search results
         search_results = filtered_subdivisions
 
     return jsonify(search_results), 200
+
+@app.route('/api/search_geo/<input_latlng>', methods=['GET'])
+@app.route('/search_geo/<input_latlng>', methods=['GET'])
+@app.route('/api/search_geo', methods=['GET'])
+@app.route('/search_geo', methods=['GET'])
+def api_search_geo(input_latlng: str="") -> tuple[dict, int]:
+    """
+    Flask route for '/api/search_geo' path/endpoint. Return ISO 3166-2 subdivision data
+    for subdivisions whose latLng attribute is approximately equal to the input latitude
+    and longitude. The input is a comma separated string of "lat,lng".
+
+    Parameters
+    ==========
+    :input_latlng: str (default="")
+        comma separated latitude and longitude, e.g. "39.4178,-2.6232".
+
+    Query Parameters
+    =================
+    :radius: float (default=50)
+        search radius in kilometers for approximate matching.
+
+    Returns
+    =======
+    :iso3166_2: json
+        jsonified response of iso3166-2 data for matched subdivisions.
+    :status_code: int
+        response status code. 200 is a successful response, 400 means there was an
+        invalid parameter input.
+    """
+    #if no input parameters set then return error message
+    if (input_latlng == ""):
+        return jsonify(create_error_message("The search_geo input parameter cannot be empty. Please pass in a comma separated lat,lng string.", request.url)), 400
+
+    #set path url for error message object
+    error_message['path'] = request.url
+
+    #parse radius query string param (km)
+    try:
+        radius_km = float(request.args.get('radius', default="50").rstrip('/'))
+    except ValueError:
+        return jsonify(create_error_message("Radius query string parameter must be a number greater than 0.", request.url)), 400
+
+    if (radius_km <= 0):
+        return jsonify(create_error_message("Radius query string parameter must be greater than 0.", request.url)), 400
+
+    #remove whitespace/unicode and split into lat/lng
+    latlng_parts = unquote(input_latlng).replace('%20', '').split(',')
+    if len(latlng_parts) != 2:
+        return jsonify(create_error_message("Input latlng must be a comma separated string of latitude and longitude, e.g. '39.4178,-2.6232'.", request.url)), 400
+
+    #validate and parse lat/lng
+    try:
+        latitude = float(latlng_parts[0])
+        longitude = float(latlng_parts[1])
+    except ValueError:
+        return jsonify(create_error_message("Latitude and longitude must be valid numbers.", request.url)), 400
+
+    if not (-90 <= latitude <= 90):
+        return jsonify(create_error_message(f"Latitude value {latitude} is out of range. Latitude must be between -90 and 90.", request.url)), 400
+    if not (-180 <= longitude <= 180):
+        return jsonify(create_error_message(f"Longitude value {longitude} is out of range. Longitude must be between -180 and 180.", request.url)), 400
+
+    #haversine distance in km
+    def haversine_km(lat1, lon1, lat2, lon2):
+        r = 6371.0
+        dlat = radians(lat2 - lat1)
+        dlon = radians(lon2 - lon1)
+        a = sin(dlat / 2) ** 2 + cos(radians(lat1)) * cos(radians(lat2)) * sin(dlon / 2) ** 2
+        c = 2 * atan2(sqrt(a), sqrt(1 - a))
+        return r * c
+
+    #search all subdivisions for approximate lat/lng matches
+    all_iso3166_2 = get_all_subdivisions()
+    matched_subdivisions = {}
+
+    for country_code, subdivisions in all_iso3166_2.items():
+        for subdivision_code, subdivision_data in subdivisions.items():
+            latlng = subdivision_data.get('latLng')
+            if not latlng or len(latlng) != 2:
+                continue
+
+            subd_lat, subd_lng = latlng[0], latlng[1]
+            distance_km = haversine_km(latitude, longitude, subd_lat, subd_lng)
+
+            if distance_km <= radius_km:
+                matched_subdivisions.setdefault(country_code, {})[subdivision_code] = subdivision_data
+
+    if not matched_subdivisions:
+        return jsonify({"Message": f"No matching subdivision data found within {radius_km} km of lat={latitude}, lng={longitude}. Try increasing the radius using '?radius=100'."}), 200
+
+    #parse filter query string param
+    filter_param = request.args.get('filter')
+
+    #filter out attributes from filter query parameter, if applicable
+    if not (filter_param is None):
+        filtered_subdivisions = filter_attributes(filter_param, matched_subdivisions)
+        if (filtered_subdivisions == -1):
+            return jsonify(create_error_message(f'Invalid attribute name input to filter query string parameter: {filter_param}. Refer to the list of supported attributes: {", ".join(all_attributes)}.', request.url)), 400
+
+        matched_subdivisions = filtered_subdivisions
+
+    return jsonify(matched_subdivisions), 200
 
 @app.route('/api/country_name/<input_country_name>', methods=['GET'])
 @app.route('/country_name/<input_country_name>', methods=['GET'])
@@ -430,8 +542,8 @@ def api_country_name(input_country_name="") -> tuple[dict, int]:
     #remove all whitespace in any of the country names
     names = [name_.strip(' ') for name_ in names]
 
-    #get list of available country names from iso3166 library, remove whitespace
-    all_names_no_space = [name_.strip(' ') for name_ in list(iso3166.countries_by_name.keys())]
+    #get list of available country names from pycountry, remove whitespace
+    all_names_no_space = [country.name.strip(' ') for country in countries]
     
     #iterate over all input country names, get corresponding 2 letter alpha-2 code
     for name_ in names:
@@ -453,8 +565,11 @@ def api_country_name(input_country_name="") -> tuple[dict, int]:
                 #return error if country name not found
                 return jsonify(create_error_message(f"Invalid country name input: {name}.", request.url)), 400             
 
-        #use iso3166 package to find corresponding alpha-2 code from its name
-        alpha2_code.append(iso3166.countries_by_name[name_matches[0].upper()].alpha2)
+        #use pycountry to find corresponding alpha-2 code from its name
+        country_match = countries.get(name=name_matches[0])
+        if country_match is None:
+            return jsonify(create_error_message(f"Invalid country name input: {name}.", request.url)), 400
+        alpha2_code.append(country_match.alpha_2)
     
     #get country data from ISO 3166-2 object, using alpha-2 code
     for code in alpha2_code:
@@ -467,7 +582,7 @@ def api_country_name(input_country_name="") -> tuple[dict, int]:
     if not (filter_param is None):
         iso3166_2 = filter_attributes(filter_param, iso3166_2)
         if (iso3166_2 == -1):
-            return jsonify(create_error_message(f"Invalid attribute name input to filter query string parameter: {filter_param}. Refer to the list of supported attributes: {", ".join(all_attributes)}.", request.url)), 400             
+            return jsonify(create_error_message(f'Invalid attribute name input to filter query string parameter: {filter_param}. Refer to the list of supported attributes: {", ".join(all_attributes)}.', request.url)), 400             
 
     return jsonify(iso3166_2), 200
 
@@ -623,9 +738,230 @@ def get_version():
     return get_subdivision_instance().__version__
 
 @app.get("/openapi.yaml")
+@app.get("/spec")
+@app.get("/api/openapi.yaml")
+@app.get("/api/spec")
 def openapi_yaml():
-    #display the Open API Swagger spec
+    """ Serve the OpenAPI specification YAML file. """
     return send_from_directory(os.path.dirname(os.path.abspath(__file__)), "openapi.yaml", mimetype="text/yaml")
+
+@app.route('/api/coords', methods=['GET'])
+@app.route('/coords', methods=['GET'])
+def api_coords() -> tuple[dict, int]:
+    """
+    Flask route for '/api/coords' path/endpoint. Return ISO 3166-2 subdivision data for the 
+    inputted latitude and longitude coordinates. Uses the OpenStreetMap Nominatim API to 
+    reverse geocode the coordinates and retrieve the subdivision code.
+
+    Parameters
+    ==========
+    lat: float (query parameter)
+        latitude coordinate (-90 to 90).
+    lng: float (query parameter)
+        longitude coordinate (-180 to 180).
+
+    Returns
+    =======
+    :iso3166_2: json
+        jsonified response of iso3166-2 data for the subdivision at the given coordinates.
+    :status_code: int
+        response status code. 200 is a successful response, 400 means there was an 
+        invalid parameter input, 404 means no subdivision found at coordinates.
+    """
+    #parse latitude and longitude from query parameters
+    lat_param = request.args.get('lat')
+    lng_param = request.args.get('lng')
+    
+    #set path url for error message object
+    error_message['path'] = request.url
+    
+    #validate that both parameters are provided
+    if lat_param is None or lng_param is None:
+        return jsonify(create_error_message("Both 'lat' and 'lng' query parameters are required. Example: /api/coords?lat=51.5074&lng=-0.1278", request.url)), 400
+    
+    #validate and parse latitude
+    try:
+        latitude = float(lat_param)
+    except ValueError:
+        return jsonify(create_error_message(f"Invalid latitude value: {lat_param}. Latitude must be a number between -90 and 90.", request.url)), 400
+    
+    #validate latitude range
+    if not (-90 <= latitude <= 90):
+        return jsonify(create_error_message(f"Latitude value {latitude} is out of range. Latitude must be between -90 and 90.", request.url)), 400
+    
+    #validate and parse longitude
+    try:
+        longitude = float(lng_param)
+    except ValueError:
+        return jsonify(create_error_message(f"Invalid longitude value: {lng_param}. Longitude must be a number between -180 and 180.", request.url)), 400
+    
+    #validate longitude range
+    if not (-180 <= longitude <= 180):
+        return jsonify(create_error_message(f"Longitude value {longitude} is out of range. Longitude must be between -180 and 180.", request.url)), 400
+    
+    #call OpenStreetMap Nominatim API for reverse geocoding
+    nominatim_url = f"https://nominatim.openstreetmap.org/reverse?format=json&lat={latitude}&lon={longitude}&zoom=10&addressdetails=1"
+    
+    #set user agent header for OSM API (required by their usage policy)
+    headers = {
+        "User-Agent": "iso3166-2-api/1.0 (https://github.com/amckenna41/iso3166-2-api)"
+    }
+    
+    try:
+        osm_response = requests.get(nominatim_url, headers=headers, timeout=10)
+        osm_response.raise_for_status()
+    except requests.exceptions.RequestException as e:
+        return jsonify(create_error_message(f"Error connecting to OpenStreetMap API: {str(e)}", request.url, 500)), 500
+    
+    osm_data = osm_response.json()
+    
+    #check if OSM returned an error or no results
+    if 'error' in osm_data:
+        return jsonify(create_error_message(f"No location found at coordinates lat={latitude}, lng={longitude}. The coordinates may be in an ocean or remote area.", request.url, 404)), 404
+    
+    #extract country code and subdivision code from OSM response
+    address = osm_data.get('address', {})
+    country_code = address.get('country_code', '').upper()
+    
+    if not country_code:
+        return jsonify(create_error_message(f"Could not determine country from coordinates lat={latitude}, lng={longitude}.", request.url, 404)), 404
+    
+    #check if country code is valid
+    if country_code not in get_alpha2_codes():
+        return jsonify(create_error_message(f"Invalid or unsupported country code {country_code} returned from coordinates.", request.url, 404)), 404
+    
+    #try to extract subdivision code from OSM response
+    #OSM uses ISO 3166-2 codes in some responses
+    iso3166_2_code = osm_data.get('address', {}).get('ISO3166-2-lvl4', '')
+    
+    #if ISO3166-2-lvl4 not available, try to construct from state/province
+    if not iso3166_2_code:
+        #try different administrative level keys that OSM might return
+        state_keys = ['state', 'province', 'region', 'county', 'state_district']
+        state_name = None
+        
+        for key in state_keys:
+            if key in address:
+                state_name = address[key]
+                break
+        
+        if not state_name:
+            return jsonify(create_error_message(f"Could not determine subdivision from coordinates lat={latitude}, lng={longitude}. The location may not have subdivision data available.", request.url, 404)), 404
+        
+        #search for the subdivision by name within the country
+        try:
+            all_country_subdivisions = get_subdivision_instance()[country_code]
+            
+            #search through subdivisions to find matching name
+            found_subdivision = None
+            for subd_code, subd_data in all_country_subdivisions.items():
+                if subd_data.get('name', '').lower() == state_name.lower():
+                    found_subdivision = subd_code
+                    break
+                #also check localOtherName if available
+                local_other_name = subd_data.get('localOtherName', '')
+                if local_other_name and state_name.lower() in local_other_name.lower():
+                    found_subdivision = subd_code
+                    break
+            
+            if not found_subdivision:
+                return jsonify(create_error_message(f"Could not find subdivision '{state_name}' in country {country_code}. The coordinates may be in an area without ISO 3166-2 subdivision data.", request.url, 404)), 404
+            
+            iso3166_2_code = found_subdivision
+            
+        except (ValueError, KeyError) as e:
+            return jsonify(create_error_message(f"Error retrieving subdivision data for country {country_code}: {str(e)}", request.url, 404)), 404
+    
+    #validate the subdivision code format
+    if not re.match(r"^[A-Z]{2}-[A-Z0-9]{1,3}$", iso3166_2_code):
+        return jsonify(create_error_message(f"Invalid subdivision code format returned: {iso3166_2_code}.", request.url, 404)), 404
+    
+    #get the subdivision data
+    try:
+        all_iso3166_2 = get_all_subdivisions()
+        
+        if country_code not in all_iso3166_2:
+            return jsonify(create_error_message(f"Country {country_code} not found in subdivision database.", request.url, 404)), 404
+        
+        if iso3166_2_code not in all_iso3166_2[country_code]:
+            return jsonify(create_error_message(f"Subdivision code {iso3166_2_code} not found for country {country_code}.", request.url, 404)), 404
+        
+        subdivision_data = all_iso3166_2[country_code][iso3166_2_code]
+        
+        #structure the output in standard format
+        iso3166_2 = {
+            iso3166_2_code: subdivision_data
+        }
+        
+        #parse filter query string param
+        filter_param = request.args.get('filter')
+        
+        #filter out attributes from filter query parameter, if applicable
+        if not (filter_param is None):
+            filtered_data = filter_attributes(filter_param, {country_code: iso3166_2})
+            if (filtered_data == -1):
+                return jsonify(create_error_message(f'Invalid attribute name input to filter query string parameter: {filter_param}. Refer to the list of supported attributes: {", ".join(all_attributes)}.', request.url)), 400
+            
+            #update the output with filtered attributes
+            iso3166_2 = filtered_data[country_code]
+        
+        return jsonify(iso3166_2), 200
+        
+    except Exception as e:
+        return jsonify(create_error_message(f"Error retrieving subdivision data: {str(e)}", request.url, 500)), 500
+
+@app.route('/random')
+@app.route('/api/random')
+def get_random() -> tuple[dict, int]:
+    """
+    Flask route for '/api/random' path/endpoint. Return a random subdivision from the 
+    ISO 3166-2 dataset, including all its attributes and values in the standard format.
+
+    Parameters
+    ==========
+    None
+
+    Returns
+    =======
+    :iso3166_2: json
+        jsonified response containing the random subdivision data with subdivision code 
+        as key and its attributes as values.
+    :status_code: int
+        response status code. 200 is a successful response.
+    """
+    #get all subdivision data from cache
+    all_iso3166_2 = get_all_subdivisions()
+    
+    #collect all subdivision codes with their country codes
+    all_subdivisions = []
+    for country_code, subdivisions in all_iso3166_2.items():
+        for subdivision_code in subdivisions.keys():
+            all_subdivisions.append((country_code, subdivision_code))
+    
+    #select a random subdivision from all available subdivisions
+    random_country_code, random_subdivision_code = random.choice(all_subdivisions)
+    
+    #get the subdivision data
+    random_subdivision_data = all_iso3166_2[random_country_code][random_subdivision_code]
+    
+    #structure the output in standard format with subdivision code as key
+    iso3166_2 = {
+        random_subdivision_code: random_subdivision_data
+    }
+    
+    #parse filter query string param
+    filter_param = request.args.get('filter')
+    
+    #filter out attributes from filter query parameter, if applicable 
+    if not (filter_param is None):
+        filtered_data = filter_attributes(filter_param, {random_country_code: iso3166_2})
+        if (filtered_data == -1):
+            return jsonify(create_error_message(f'Invalid attribute name input to filter query string parameter: {filter_param}. Refer to the list of supported attributes: {", ".join(all_attributes)}.', request.url)), 400
+        
+        #update the output with filtered attributes
+        iso3166_2 = filtered_data[random_country_code]
+    
+    return jsonify(iso3166_2), 200
 
 # def handler(environ, start_response):
 #     return app(environ, start_response)

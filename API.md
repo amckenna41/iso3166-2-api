@@ -11,13 +11,13 @@ The main API endpoint is:
 
 The other endpoints available in the API are:
 * https://iso3166-2-api.vercel.app/api/all
-* https://iso3166-2-api.vercel.app/api/alpha/<input_alpha>
-* https://iso3166-2-api.vercel.app/api/subdivision/<input_subdivision>
-* https://iso3166-2-api.vercel.app/api/search/<input_search_name>
-* https://iso3166-2-api.vercel.app/api/country_name/<input_country_name>
-* https://iso3166-2-api.vercel.app/api/list_subdivisions or https://iso3166-2-api.vercel.app/api/list_subdivisions/<input_alpha_code>
+* https://iso3166-2-api.vercel.app/api/alpha/{input_alpha}
+* https://iso3166-2-api.vercel.app/api/subdivision/{input_subdivision}
+* https://iso3166-2-api.vercel.app/api/search/{input_search_name}
+* https://iso3166-2-api.vercel.app/api/search_geo/{input_latlng}
+* https://iso3166-2-api.vercel.app/api/country_name/{input_country_name}
+* https://iso3166-2-api.vercel.app/api/list_subdivisions or https://iso3166-2-api.vercel.app/api/list_subdivisions/{input_alpha_code}
 
-Six paths/endpoints are available in the API - `/api/all`, `/api/alpha`, `/api/subdivision`, `/api/search`, `/api/country_name`  and `/api/list_subdivisions`.
 
 * `/api`: main homepage and API documentation.
 
@@ -28,6 +28,8 @@ Six paths/endpoints are available in the API - `/api/all`, `/api/alpha`, `/api/s
 * `/api/subdivision`: get all of the ISO 3166 subdivision data for 1 or more ISO 3166-2 subdivision codes, e.g `/api/subdivision/GB-ABD`. You can also input a comma separated list of subdivision codes from the same and or different countries and the data for each will be returned e.g `/api/subdivision/IE-MO,FI-17,RO-AG`. If the input subdivision code is not in the correct format then an error will be raised. Similarly if an invalid subdivision code that doesn't exist is input then an error will be raised.
 
 * `/api/search/`: get all of the ISO 3166 subdivision data for 1 or more ISO 3166-2 subdivision names that match the inputted search terms, e.g `/api/search/Derry`, `/api/search/Kimpala`. You can also input a comma separated list of subdivision name from the same or different countries and the data for each will be returned e.g `/api/name/Paris,Frankfurt,Rimini`. A closeness function is utilised to find the matching subdivision name, if no exact name match found then the most approximate subdivisions will be returned. Some subdivisions may have the same name, in this case each subdivision and its data will be returned e.g `/api/name/Saint George` (this example returns 5 subdivisions). If an invalid subdivision name that doesn't match any is input then an error will be raised. The `likeness` and `excludeMatchScore` query string parameters can be used with this endpoint. 
+
+* `/api/search_geo`: get all of the ISO 3166 subdivision data for subdivisions whose `latLng` attribute is approximately equal to the input latitude/longitude, e.g `/api/search_geo/39.4178,-2.6232`. A comma separated lat,lng string must be input. The optional `radius` query string parameter (in kilometers) controls the search radius; default is 50 km.
 
 * `/api/country_name`: get all of the ISO 3166 subdivision data for 1 or more inputted ISO 3166-1 country names, as they are commonly known in English, e.g. `/api/country_name/France,Moldova,Benin`. A comma separated list of country names can also be input. A closeness function is utilised so the most approximate name from the input will be used e.g. Sweden will be returned if the input is `/api/country_name/Swede`. If no country is found from the closeness function or an invalid name is input then an error will be returned. The `likeness` query string parameter can be used with this endpoint.
 
@@ -44,6 +46,7 @@ having a lower value will return less exact but more total matches, e.g ``/api/s
 * **filterAttributes** - this is a list of the default supported attributes that you want to include in the output. By default all attributes will be returned but this parameter is useful if you only require a subset of attributes, e.g `api/alpha/DEU?filter=latLng,flag`, `api/subdivision/PL-02?filter=localOtherName`.
 * **excludeMatchScore** - this allows you to exclude the matchScore attribute from the search results when using the `/api/search endpoint`. The match score is the % of a match each returned subdivision data object is to the search terms, with 100% being an exact match. By default the match score is returned for each object, e.g `/api/search/Bucharest?excludeMatchScore=1`, ``/api/search/Oregon?excludeMatchScore=1`` (default=0).
 * **limit** - this allows you to limit the total number of countries returned from the API call. This is only available in the `/api/all` endpoint. When calling the endpoint, all of the available data is called so this param allows you to get a faster small subset of the data. The first X country subdivision data will be returned. 
+* **radius** - search radius in kilometers for the `/api/search_geo` endpoint. Default is 50 km.
 
 > A demo of the software and API is available [here][demo].
 
@@ -371,6 +374,110 @@ function getData() {
   const response = 
     await fetch(`https://iso3166-updates.com/api/search/${input_subdivision_name}`, params); 
   const data = await response.json()
+}
+
+// Begin accessing JSON data here
+var data = JSON.parse(this.response)
+```
+
+Search for ISO 3166-2 subdivision data using approximate latitude/longitude coordinates e.g 39.4178,-2.6232
+------------------------------------------------------------------------------------------------------------
+
+### Request
+`GET /api/search_geo/39.4178,-2.6232`
+
+        curl -i https://iso3166-2-api.vercel.app/api/search_geo/39.4178,-2.6232
+
+### Response
+        HTTP/2 200 
+        content-type: application/json
+        date: Mon, 29 Jan 2025 13:22:10 GMT
+        server: Vercel
+        content-length: 214
+
+        {"ES-CM":{"flag":"https://github.com/amckenna41...}}
+
+    ### Example
+    `GET /api/search_geo/28.2936,-16.6214?radius=50`
+
+        curl -i https://iso3166-2-api.vercel.app/api/search_geo/28.2936,-16.6214?radius=50
+
+### Request
+`GET /api/search_geo/37.9567,-4.8477?radius=25`
+
+        curl -i https://iso3166-2-api.vercel.app/api/search_geo/37.9567,-4.8477?radius=25
+
+### Response
+        HTTP/2 200 
+        content-type: application/json
+        date: Mon, 29 Jan 2025 13:23:01 GMT
+        server: Vercel
+        content-length: 225
+
+        {"ES-CO":{"flag":"https://github.com/amckenna41...}}
+
+### Python
+```python
+import requests
+
+base_url = "https://iso3166-2-api.vercel.app/api/search_geo/"
+input_latlng = "39.4178,-2.6232" #37.9567,-4.8477
+
+request_url = f'{base_url}{input_latlng}'
+params={"radius":"25"} #optional radius in km
+
+all_request = requests.get(request_url, params=params)
+all_request.json() 
+```
+
+### Javascript
+```javascript
+let input_latlng = "39.4178,-2.6232"; //37.9567,-4.8477
+let params = {"radius": "25"} //optional radius in km
+
+function getData() {
+    const response = 
+        await fetch(`https://iso3166-2-api.vercel.app/api/search_geo/${input_latlng}`, params); 
+    const data = await response.json()
+}
+
+// Begin accessing JSON data here
+var data = JSON.parse(this.response)
+```
+
+Get a random ISO 3166-2 subdivision
+-----------------------------------
+
+### Request
+`GET /api/random`
+
+        curl -i https://iso3166-2-api.vercel.app/api/random
+
+### Response
+        HTTP/2 200 
+        content-type: application/json
+        date: Mon, 29 Jan 2025 13:30:10 GMT
+        server: Vercel
+        content-length: 214
+
+        {"DE-BE":{"flag":"https://github.com/amckenna41...}}
+
+### Python
+```python
+import requests
+
+request_url = "https://iso3166-2-api.vercel.app/api/random"
+
+all_request = requests.get(request_url)
+all_request.json() 
+```
+
+### Javascript
+```javascript
+function getData() {
+    const response = 
+        await fetch('https://iso3166-2-api.vercel.app/api/random'); 
+    const data = await response.json()
 }
 
 // Begin accessing JSON data here

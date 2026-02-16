@@ -9,9 +9,20 @@
 [![License: MIT](https://img.shields.io/github/license/amckenna41/iso3166-2)](https://opensource.org/licenses/MIT)
 [![Issues](https://img.shields.io/github/issues/amckenna41/iso3166-2-api)](https://github.com/amckenna41/iso3166-2-api/issues)
 
-<div alt="images" style="justify-content: center; display:flex; margin-left=50px;">
+<!-- <div alt="images" style="justify-content: center; display:flex; margin-left=50px;">
   <img src="https://upload.wikimedia.org/wikipedia/commons/3/3d/Flag-map_of_the_world_%282017%29.png" alt="globe" height="200" width="500"/>
   <img src="https://upload.wikimedia.org/wikipedia/commons/e/e3/ISO_Logo_%28Red_square%29.svg" alt="iso" height="200" width="300"/>
+</div> -->
+<div style="display:flex; align-items:center; justify-content:center; gap:12px; max-width:100%;">
+  <!-- both images: same fixed row height + constrained width so they fit -->
+  <img
+    src="https://upload.wikimedia.org/wikipedia/commons/3/3d/Flag-map_of_the_world_%282017%29.png"
+    alt="globe"
+    style="height:220px; width:auto; max-width:calc(50% - 6px); object-fit:contain;" />
+  <img
+    src="https://raw.githubusercontent.com/amckenna41/iso3166-2/refs/heads/main/iso3166-2-logo.png"
+    alt="icon"
+    style="height:220px; width:auto; max-width:calc(50% - 6px); object-fit:contain;" />
 </div>
 
 > Frontend RESTful API for the [`iso3166-2`](https://github.com/amckenna41/iso3166-2) software and repo that returns a plethora of bespoke, valuable and useful attributes for the >5000 subdivisions/regions for all countries in the ISO 3166-2 standard. Built using the Python Flask framework and hosted on the Vercel platform.
@@ -20,10 +31,11 @@
 
 Quick Start 🏃
 --------------
-* The API is available here [here](https://iso3166-2-api.vercel.app/api)
-* Source code for main `iso3166-2` software package is available [here][iso3166_2_repo]
-* A <b>demo</b> of the software and API is available [here][demo]
-* A <b>Medium</b> article that dives deeper into `iso3166-2` is available [here][medium]
+* 💻 The API is available here [here](https://iso3166-2-api.vercel.app/api)
+* </> Source code for main `iso3166-2` software package is available [here][iso3166_2_repo]
+* 📚 The **documentation** for the software & API is available [here](https://iso3166-2.readthedocs.io/en/latest/).
+* 🚀 A <b>demo</b> of the software and API is available [here][demo]
+* 📄 A <b>Medium</b> article that dives deeper into `iso3166-2` is available [here][medium]
 
 Table of Contents
 -----------------
@@ -38,7 +50,7 @@ Table of Contents
 ## Introduction
 This repo contains the front and backend of the RESTful API created to accompany the [`iso3166-2`](https://github.com/amckenna41/iso3166-2) repository. The API returns a plethora of bespoke, useful and valuable subdivision data for all countries in the ISO 3166-2 standard. Built using the Python [Flask][flask] framework and hosted on the [Vercel][vercel] platform.
 
-[`iso3166-2`](https://github.com/amckenna41/iso3166-2) is a lightweight custom-built Python package that can be used to access all of the world's ISO 3166-2 subdivision data. Here, subdivision can be used interchangeably with regions/states/provinces etc. Currently, the package and API support subdivision data from **250** officially assigned code elements within the ISO 3166-1, with **200** of these countries having recognized subdivisions (50 entires have 0 subdivisions), totalling **5,049** subdivisions across the whole dataset.
+[`iso3166-2`](https://github.com/amckenna41/iso3166-2) is a lightweight custom-built Python package that can be used to access all of the world's ISO 3166-2 subdivision data. Here, subdivision can be used interchangeably with regions/states/provinces etc. Currently, the package and API support subdivision data from **250** officially assigned code elements within the ISO 3166-1, with **200** of these countries having recognized subdivisions (50 entires have 0 subdivisions), totalling **5,046** subdivisions across the whole dataset.
 
 The full list of subdivision data attributes supported are:
 
@@ -50,6 +62,7 @@ The full list of subdivision data attributes supported are:
 * **Latitude/Longitude** - subdivision coordinates
 * **Flag** - subdivision flag from [`iso3166-flags`](https://github.com/amckenna41/iso3166-flags) repo; this is another ISO 3166 related custom-built dataset of over **3500** regional/subdivision flags
 * **History** - historical updates/changes to the subdivision code and naming conventions, as per the custom-built [`iso3166-updates`](https://github.com/amckenna41/iso3166-updates) repo.
+
 
 ## Bespoke Features
 
@@ -64,11 +77,11 @@ For each local/other name, the ISO 639 3 letter language code is used to identif
 * **Bobonaro (East Timor TL-BO)**: "Bobonaru (tet), Buburnaru (tet), Tall eucalypt (eng)"
 * **Wyoming (USA US-WY)** - "Equality State (eng), Cowboy State (eng), Big Wyoming (eng)"
 
-The full dataset of local/other names is available in the repo here [`local_other_names.csv`](https://github.com/amckenna41/iso3166-2/iso3166_2_resources/local_other_names.csv)
+The full dataset of local/other names is available in the repo here [`local_other_names.csv`](https://github.com/amckenna41/iso3166-2/blob/main/iso3166_2_resources/local_other_names.csv)
 
 
 ### Flags
-The other equally important and bespoke/unique attribute that the software package supports is the ``flag`` attribute, which is a link to the subdivision's flag on the [`iso3166-flags`](https://github.com/amckenna41/iso3166-flags) repo. This is another **custom-built** repository, (alongside [`iso3166-2`](https://github.com/amckenna41/iso3166-2) and [`iso3166-updates`](https://github.com/amckenna41/iso3166-updates)) that stores a rich and comprehensive dataset of over **3200** individual country and subdivision flags. 
+The other equally important and bespoke/unique attribute that the software package supports is the ``flag`` attribute, which is a link to the subdivision's flag on the [`iso3166-flags`](https://github.com/amckenna41/iso3166-flags) repo. This is another **custom-built** repository, (alongside [`iso3166-2`](https://github.com/amckenna41/iso3166-2) and [`iso3166-updates`](https://github.com/amckenna41/iso3166-updates)) that stores a rich and comprehensive dataset of over **3500** individual subdivision flags. 
 
 The flags repo uses the `iso3166-2` software to get the full list of ISO 3166-2 subdivision codes which is kept up-to-date and accurate via the `iso3166-updates` software. 
 
@@ -81,6 +94,19 @@ The `history` attribute has any applicable historical updates/changes to the ind
    <div align="center">❤️ iso3166-2 🤝 iso3166-updates ❤️</div>
 
 ## Usage
+
+The main API endpoint is:
+
+> [https://iso3166-2-api.vercel.app/api](https://iso3166-2-api.vercel.app/api)
+
+The other endpoints available in the API are:
+* https://iso3166-2-api.vercel.app/api/all
+* https://iso3166-2-api.vercel.app/api/alpha/{input_alpha}
+* https://iso3166-2-api.vercel.app/api/subdivision/{input_subdivision}
+* https://iso3166-2-api.vercel.app/api/search/{input_search_name}
+* https://iso3166-2-api.vercel.app/api/search_geo/{input_latlng}
+* https://iso3166-2-api.vercel.app/api/country_name/{input_country_name}
+* https://iso3166-2-api.vercel.app/api/list_subdivisions or https://iso3166-2-api.vercel.app/api/list_subdivisions/{input_alpha_code}
 
 Please refer to the [`API.md`](https://github.com/amckenna41/iso3166-2-api/API.md) file for API usage examples.
 
@@ -96,7 +122,6 @@ The list of ISO 3166 updates was last updated on <strong>June 2024</strong>. A l
 * [python][python] >= 3.9
 * [flask][flask] >= 2.3.2
 * [requests][requests] >= 2.28.1
-* [iso3166][iso3166] >= 2.1.1
 * [iso3166-2][iso3166_2] >= 1.8.0
 * [unidecode][unidecode] >= 1.3.8
 * [thefuzz][thefuzz] >= 0.22.1
@@ -110,8 +135,8 @@ If you have any questions or comments, please contact amckenna41@qub.ac.uk or ra
 ## Other ISO 3166 repositories
 Below are some of my other custom-built repositories that relate to the ISO 3166 standard.
 
-* [iso3166-2](https://github.com/amckenna41/iso3166-2):  a lightweight custom-built Python package that can be used to access all of the world's ISO 3166-2 subdivision data.  Currently, the package and API support subdivision data from **250** officially assigned code elements within the ISO 3166-1, with **200** of these countries having recognized subdivisions (50 entires have 0 subdivisions), totalling **5,049** subdivisions across the whole dataset.
-* [iso3166-updates](https://github.com/amckenna41/iso3166-update): software and accompanying RESTful API that checks for any updates/changes to the ISO 3166-1 and ISO 3166-2 country codes and subdivision naming conventions, as per the ISO 3166 newsletter (https://www.iso.org/iso-3166-country-codes.html) and Online Browsing Platform (OBP) (https://www.iso.org/obp/ui).
+* [iso3166-2](https://github.com/amckenna41/iso3166-2):  a lightweight custom-built Python package that can be used to access all of the world's ISO 3166-2 subdivision data.  Currently, the package and API support subdivision data from **250** officially assigned code elements within the ISO 3166-1, with **200** of these countries having recognized subdivisions (50 entires have 0 subdivisions), totalling **5,046** subdivisions across the whole dataset.
+* [iso3166-updates](https://github.com/amckenna41/iso3166-updates): software and accompanying RESTful API that checks for any updates/changes to the ISO 3166-1 and ISO 3166-2 country codes and subdivision naming conventions, as per the ISO 3166 newsletter (https://www.iso.org/iso-3166-country-codes.html) and Online Browsing Platform (OBP) (https://www.iso.org/obp/ui).
 * [iso3166-updates-api](https://github.com/amckenna41/iso3166-updates-api): frontend API for iso3166-updates.
 * [iso3166-flags](https://github.com/amckenna41/iso3166-flags): a comprehensive library of over 3500 country and regional flags from the ISO 3166-1 and ISO 3166-2 standards.
 
@@ -123,7 +148,7 @@ Below are some of my other custom-built repositories that relate to the ISO 3166
 \[5\]: ISO3166-2 flags repo: https://github.com/amckenna41/iso3166-flags <br>
 
 ## Support
-[<img src="https://img.shields.io/github/stars/amckenna41/iso3166-2-api?color=green&label=star%20it%20on%20GitHub" width="132" height="20" alt="Star it on GitHub">](https://github.com/amckenna41/iso3166-2-api)
+[<img src="https://img.shields.io/github/stars/amckenna41/iso3166-2-api?color=green&label=star%20it%20on%20GitHub" width="132" height="20" alt="Star it on GitHub">](https://github.com/amckenna41/iso3166-2-api) <br>
 <a href="https://www.buymeacoffee.com/amckenna41" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/default-orange.png" alt="Buy Me A Coffee" height="41" width="174"></a>
 
 [Back to top](#TOP)

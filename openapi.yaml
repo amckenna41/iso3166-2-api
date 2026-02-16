@@ -20,6 +20,15 @@ components:
       description: Comma-separated list of attributes to include (e.g., `name,type,parentCode`).
       required: false
       schema: { type: string }
+    RadiusKm:
+      name: radius
+      in: query
+      description: Search radius in kilometers for `/search_geo/{input}` (default 50).
+      required: false
+      schema:
+        type: number
+        minimum: 0
+        default: 50
     Likeness:
       name: likeness
       in: query
@@ -259,6 +268,36 @@ paths:
                 "SR-BR": { code: "SR-BR", name: "Brokopondo", type: "district", matchScore: 98 }
                 "US-DE": { code: "US-DE", name: "Delaware", type: "state", matchScore: 97 }
         "400": { description: No matches or invalid input, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+  /search_geo/{input}:
+    get:
+      tags: [Search]
+      summary: Search subdivisions by approximate lat/lng
+      description: |
+        Accepts a comma-separated lat,lng string (e.g. `39.4178,-2.6232`).
+        Returns subdivisions whose `latLng` is within the optional `radius` (km).
+      parameters:
+        - name: input
+          in: path
+          required: true
+          schema: { type: string }
+          example: "39.4178,-2.6232"
+        - $ref: "#/components/parameters/RadiusKm"
+        - $ref: "#/components/parameters/FilterAttributes"
+      responses:
+        "200":
+          description: Country map of subdivision objects within the search radius
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties:
+                  type: object
+                  additionalProperties:
+                    $ref: "#/components/schemas/Subdivision"
+              example:
+                ES:
+                  ES-CM: { code: "ES-CM", name: "Castilla-La Mancha", type: "Autonomous community" }
+        "400": { description: Invalid input, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
   /list_subdivisions:
     get:
       tags: [Utility]

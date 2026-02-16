@@ -1,5 +1,22 @@
 # Change Log 
 
+## 1.8.1/v1.8.2 - Feb 2026
+
+### Added
+
+- Added /spec & /openapi.yml endpoints on API, added unit tests
+- Added /random endpoint on API that returns a random subdivision from the >5000 available, added unit tests
+- Added additional caching 
+- Added /search_geo endpoint which allows you to search for a subdivision via its coordinates
+- Added iso3166-2 logo
+
+### Changed
+- Change use of python-iso3166 library to pycountry
+
+
+### Fixed
+
+
 ## 1.6.0-1.7.2 - June 2024 - July 2025
 
 
