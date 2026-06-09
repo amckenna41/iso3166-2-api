@@ -1227,14 +1227,14 @@ class ISO3166_2_API_Tests(unittest.TestCase):
     def test_subdivision_post_endpoint(self):
         """ Testing the POST /subdivision endpoint handles bulk subdivision code lookup. """
 #1.)
-        test_codes = ["GB-ABD", "FR-75", "US-CA", "DE-BY"]
+        test_codes = ["GB-ABD", "FR-75C", "US-CA", "DE-BY"]
         test_post_request = requests.post(self.subdivision_post_url, json={"codes": test_codes}, headers=self.user_agent_header)
         self.assertEqual(test_post_request.status_code, 200, f"Expected 200 status code from POST /api/subdivision, got {test_post_request.status_code}.")
         post_data = test_post_request.json()
         for country in ["GB", "FR", "US", "DE"]:
             self.assertIn(country, post_data, f"Expected country code '{country}' in POST /api/subdivision response.")
         self.assertIn("GB-ABD", post_data["GB"], "Expected 'GB-ABD' in response.")
-        self.assertIn("FR-75", post_data["FR"], "Expected 'FR-75' in response.")
+        self.assertIn("FR-75C", post_data["FR"], "Expected 'FR-75C' in response.")
 #2.)
         test_post_empty = requests.post(self.subdivision_post_url, json={"codes": []}, headers=self.user_agent_header)
         self.assertEqual(test_post_empty.status_code, 400, f"Expected 400 for empty codes list, got {test_post_empty.status_code}.")

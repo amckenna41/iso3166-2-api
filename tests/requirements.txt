@@ -1,6 +1,10 @@
 iso3166
-iso3166-2>=1.8.0
+iso3166-2>=1.8.3
+flask
 requests
+unidecode
+thefuzz
+pycountry
 fake_useragent
 BeautifulSoup4
 jsonschema

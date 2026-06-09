@@ -7,7 +7,7 @@ import csv
 import io
 import json
 import requests
-from pycountry import countries
+from pycountry import countries, languages as pycountry_languages
 from thefuzz import process
 import random
 from unidecode import unidecode
@@ -300,7 +300,10 @@ def api_alpha(input_alpha: str="") -> tuple[dict, int]:
     try:
         iso3166_2 = get_subdivision_instance()[input_alpha]
     except ValueError as ve:
-        return jsonify(create_error_message(str(ve), request.url)), 400   
+        error_msg = str(ve)
+        if '. Did you mean' in error_msg:
+            error_msg = error_msg[:error_msg.index('. Did you mean')] + '.'
+        return jsonify(create_error_message(error_msg, request.url)), 400
 
     #parse filter query string param
     filter_param = request.args.get('filter')
@@ -309,7 +312,17 @@ def api_alpha(input_alpha: str="") -> tuple[dict, int]:
     if not (filter_param is None):
         iso3166_2 = filter_attributes(filter_param, iso3166_2)
         if (iso3166_2 == -1):
-            return jsonify(create_error_message(f'Invalid attribute name input to filter query string parameter: {filter_param}. Refer to the list of supported attributes: {", ".join(all_attributes)}.', request.url)), 400   
+            return jsonify(create_error_message(f'Invalid attribute name input to filter query string parameter: {filter_param}. Refer to the list of supported attributes: {", ".join(all_attributes)}.', request.url)), 400
+
+    #detect if data is flat {subdiv_code: data} (single country) or nested {country_code: {subdiv_code: data}} (multi-country)
+    #single-country results have subdivision codes (containing '-') as top-level keys; multi-country results have alpha-2 codes
+    first_key = next(iter(iso3166_2), None)
+    is_flat = bool(first_key and '-' in first_key)
+    if is_flat:
+        country_alpha2 = first_key.split('-')[0]
+        iso3166_2_nested = {country_alpha2: dict(iso3166_2)}
+    else:
+        iso3166_2_nested = dict(iso3166_2)
 
     #parse lang query string param and filter localOtherName to the requested language
     lang_param = request.args.get('lang')
@@ -317,16 +330,21 @@ def api_alpha(input_alpha: str="") -> tuple[dict, int]:
         lang_param = lang_param.strip()
         if not re.match(r'^[a-zA-Z0-9]{2,10}$', lang_param):
             return jsonify(create_error_message("lang query string parameter must be an ISO 639 language code (2–10 alphanumeric characters).", request.url)), 400
-        iso3166_2 = filter_lang_local_name(iso3166_2, lang_param)
+        if not (pycountry_languages.get(alpha_3=lang_param.lower()) or pycountry_languages.get(alpha_2=lang_param.lower())):
+            return jsonify(create_error_message(f"Unrecognized ISO 639 language code: {lang_param}.", request.url)), 400
+        iso3166_2_nested = filter_lang_local_name(iso3166_2_nested, lang_param)
 
     #parse format query string param
     format_param = request.args.get('format', 'json').lower().strip()
     if format_param not in ('json', 'csv', 'geojson'):
         return jsonify(create_error_message(f"Unsupported format '{format_param}'. Supported formats: json, csv, geojson.", request.url)), 400
     if format_param != 'json':
-        return make_format_response(iso3166_2, format_param)
+        return make_format_response(iso3166_2_nested, format_param)
 
-    return jsonify(iso3166_2), 200
+    #unwrap back to flat format for single-country JSON responses
+    if is_flat:
+        return jsonify(iso3166_2_nested[country_alpha2]), 200
+    return jsonify(iso3166_2_nested), 200
 
 @app.route('/api/subdivision/<input_subdivision>', methods=['GET'])
 @app.route('/subdivision/<input_subdivision>', methods=['GET'])
