@@ -107,6 +107,7 @@ The other endpoints available in the API are:
 * https://iso3166-2-api.vercel.app/api/search_geo/{input_latlng}
 * https://iso3166-2-api.vercel.app/api/country_name/{input_country_name}
 * https://iso3166-2-api.vercel.app/api/list_subdivisions or https://iso3166-2-api.vercel.app/api/list_subdivisions/{input_alpha_code}
+* https://iso3166-2-api.vercel.app/api/stats
 
 Please refer to the [`API.md`](https://github.com/amckenna41/iso3166-2-api/API.md) file for API usage examples.
 

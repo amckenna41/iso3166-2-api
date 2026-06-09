@@ -2,4 +2,5 @@ flask
 requests
 unidecode
 thefuzz
-iso3166-2>=1.8.2
+pycountry
+iso3166-2>=1.8.3

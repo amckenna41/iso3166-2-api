@@ -17,6 +17,7 @@ The other endpoints available in the API are:
 * https://iso3166-2-api.vercel.app/api/search_geo/{input_latlng}
 * https://iso3166-2-api.vercel.app/api/country_name/{input_country_name}
 * https://iso3166-2-api.vercel.app/api/list_subdivisions or https://iso3166-2-api.vercel.app/api/list_subdivisions/{input_alpha_code}
+* https://iso3166-2-api.vercel.app/api/stats
 
 
 * `/api`: main homepage and API documentation.
@@ -25,7 +26,7 @@ The other endpoints available in the API are:
 
 * `/api/alpha`: get all of the ISO 3166 subdivision data for 1 or more inputted ISO 3166-1 alpha-2, alpha-3 or numeric country codes, e.g. `/api/alpha/FR,DE,HU,ID,MA`, `/api/alpha/FRA,DEU,HUN,IDN,MAR` and `/api/alpha/428,504,638`. A comma separated list of multiple alpha codes can also be input. If an invalid country code is input then an error will be returned.
 
-* `/api/subdivision`: get all of the ISO 3166 subdivision data for 1 or more ISO 3166-2 subdivision codes, e.g `/api/subdivision/GB-ABD`. You can also input a comma separated list of subdivision codes from the same and or different countries and the data for each will be returned e.g `/api/subdivision/IE-MO,FI-17,RO-AG`. If the input subdivision code is not in the correct format then an error will be raised. Similarly if an invalid subdivision code that doesn't exist is input then an error will be raised.
+* `/api/subdivision`: get all of the ISO 3166 subdivision data for 1 or more ISO 3166-2 subdivision codes, e.g `/api/subdivision/GB-ABD`. You can also input a comma separated list of subdivision codes from the same and or different countries and the data for each will be returned e.g `/api/subdivision/IE-MO,FI-17,RO-AG`. If the input subdivision code is not in the correct format then an error will be raised. Similarly if an invalid subdivision code that doesn't exist is input then an error will be raised. **URL length limit:** passing very long comma-separated lists can exceed browser/server URL length limits (~2000 characters, roughly 100–150 codes). For bulk lookups beyond that, use the `POST /api/subdivision` endpoint which accepts a JSON body with a `codes` array of up to 500 codes.
 
 * `/api/search/`: get all of the ISO 3166 subdivision data for 1 or more ISO 3166-2 subdivision names that match the inputted search terms, e.g `/api/search/Derry`, `/api/search/Kimpala`. You can also input a comma separated list of subdivision name from the same or different countries and the data for each will be returned e.g `/api/name/Paris,Frankfurt,Rimini`. A closeness function is utilised to find the matching subdivision name, if no exact name match found then the most approximate subdivisions will be returned. Some subdivisions may have the same name, in this case each subdivision and its data will be returned e.g `/api/name/Saint George` (this example returns 5 subdivisions). If an invalid subdivision name that doesn't match any is input then an error will be raised. The `likeness` and `excludeMatchScore` query string parameters can be used with this endpoint. 
 
@@ -36,17 +37,23 @@ The other endpoints available in the API are:
 * `/api/list_subdivisions`: get list of all the subdivision codes for all countries. You can also get the list of subdivisions from a subset of 
 countries via their ISO 3166-1 country code.
 
-### Query String Parameters
-There are three main query string parameters that can be passed through several of the endpoints of the API:
+* `/api/stats`: get live statistics about the ISO 3166-2 dataset — total countries, total subdivisions, countries with/without subdivisions, average subdivisions per country, flag coverage, and the current package version.
 
-* **likeness** - this is a value between 1 and 100 that increases or reduces the % of similarity/likeness that the 
-inputted search terms have to match to the subdivision data in the subdivision code, name and local/other name attributes. This can be used with the `/api/search` and `/api_country_name` endpoints. Having a higher value should return more exact and less total matches and 
+### Query String Parameters
+There are several query string parameters that can be passed through several of the endpoints of the API:
+
+* **likeness** (`?likeness=N`) - this is a value between 1 and 100 that increases or reduces the % of similarity/likeness that the 
+inputted search terms have to match to the subdivision data in the subdivision code, name and local/other name attributes. This can be used with the `/api/search` and `/api/country_name` endpoints. Having a higher value should return more exact and less total matches and 
 having a lower value will return less exact but more total matches, e.g ``/api/search/Paris?likeness=50``, 
-``/api/country_name/Tajikist?likeness=90`` (default=100).
-* **filterAttributes** - this is a list of the default supported attributes that you want to include in the output. By default all attributes will be returned but this parameter is useful if you only require a subset of attributes, e.g `api/alpha/DEU?filter=latLng,flag`, `api/subdivision/PL-02?filter=localOtherName`.
+``/api/country_name/Tajikist?likeness=90`` (default=100). **Note:** if using the `iso3166-2` Python package directly, the equivalent function parameter is named `likeness_score` (not `likeness`).
+* **filterAttributes** - this is a list of the default supported attributes that you want to include in the output. By default all attributes will be returned but this parameter is useful if you only require a subset of attributes. Supported by **all data endpoints** including `/api/all`, e.g `api/all?filter=name,latLng`, `api/alpha/DEU?filter=latLng,flag`, `api/subdivision/PL-02?filter=localOtherName`.
 * **excludeMatchScore** - this allows you to exclude the matchScore attribute from the search results when using the `/api/search endpoint`. The match score is the % of a match each returned subdivision data object is to the search terms, with 100% being an exact match. By default the match score is returned for each object, e.g `/api/search/Bucharest?excludeMatchScore=1`, ``/api/search/Oregon?excludeMatchScore=1`` (default=0).
 * **limit** - this allows you to limit the total number of countries returned from the API call. This is only available in the `/api/all` endpoint. When calling the endpoint, all of the available data is called so this param allows you to get a faster small subset of the data. The first X country subdivision data will be returned. 
 * **radius** - search radius in kilometers for the `/api/search_geo` endpoint. Default is 50 km.
+* **format** (`?format=json|csv|geojson`) - output format for the response. Default is `json`. `csv` returns a downloadable CSV file with one row per subdivision. `geojson` returns a GeoJSON FeatureCollection with lat/lng stored as Point geometry (compatible with QGIS, Mapbox, Leaflet, etc.). Supported on `/api/all`, `/api/alpha`, `/api/subdivision`, `/api/search`, and `/api/country_name`.
+* **lang** (`?lang=<ISO639code>`) - filter the `localOtherName` attribute to only include entries in the specified ISO 639 language code (e.g. `?lang=fra` for French, `?lang=deu` for German). Supported on all data endpoints, e.g `/api/all?lang=fra`, `/api/alpha/DE?lang=deu`.
+* **page** (`?page=N`) - page number for paginated `/api/all` responses (1-indexed). Only activates pagination when `?page` or `?pageSize` is explicitly provided. The paginated response wraps the data in a `{"data": {...}, "page": N, "pageSize": N, "totalPages": N, "totalCountries": N}` envelope.
+* **pageSize** (`?pageSize=N`) - number of countries per page for paginated `/api/all` responses. Accepts 1–250 (default 50).
 
 > A demo of the software and API is available [here][demo].
 
@@ -372,7 +379,7 @@ let params = {"likeness": "90"} //pass a likeness score of 90 to the request
 
 function getData() {
   const response = 
-    await fetch(`https://iso3166-updates.com/api/search/${input_subdivision_name}`, params); 
+    await fetch(`https://iso3166-2-api.vercel.app/api/search/${input_subdivision_name}?likeness=${params.likeness}`); 
   const data = await response.json()
 }
 
@@ -536,7 +543,7 @@ import requests
 base_url = "https://iso3166-2-api.vercel.app/api/country_name/"
 input_name = "Tajikistan" #Seychelles, Uganda
 
-request_url = f'{base_ur}{input_name}'
+request_url = f'{base_url}{input_name}'
 
 all_request = requests.get(request_url)
 all_request.json() 
@@ -548,7 +555,7 @@ let input_name = "Tajikistan"; //Seychelles, Uganda
 
 function getData() {
   const response = 
-    await fetch(`https://iso3166-updates.com/api/country_name/${input_name}`); 
+    await fetch(`https://iso3166-2-api.vercel.app/api/country_name/${input_name}`); 
   const data = await response.json()
 }
 
@@ -602,8 +609,8 @@ all_request.json()
 ```javascript
 function getData() {
   const response = 
-    await fetch(`https://iso3166-updates.com/api/list_subdivisions`); 
-    // await fetch(`https://iso3166-updates.com/api/list_subdivisions/LK`); 
+    await fetch(`https://iso3166-2-api.vercel.app/api/list_subdivisions`); 
+    // await fetch(`https://iso3166-2-api.vercel.app/api/list_subdivisions/LK`); 
   const data = await response.json()
 }
 
@@ -646,6 +653,97 @@ function getData() {
 
 // Begin accessing JSON data here
 var data = JSON.parse(this.response)
+```
+
+[Back to top](#TOP)
+
+Get live statistics about the ISO 3166-2 dataset
+-------------------------------------------------
+### Request
+`GET /api/stats`
+
+    curl -i https://iso3166-2-api.vercel.app/api/stats
+
+### Response
+    HTTP/2 200
+    content-type: application/json
+    date: Wed, 14 May 2026 10:00:00 GMT
+    server: Vercel
+
+    {
+      "totalCountries": 249,
+      "totalSubdivisions": 5046,
+      "countriesWithSubdivisions": 200,
+      "countriesWithoutSubdivisions": 49,
+      "averageSubdivisionsPerCountry": 25.23,
+      "maxSubdivisions": {"country": "GB", "count": 221},
+      "minSubdivisions": {"country": "AD", "count": 7},
+      "flagCoverage": {"count": 3501, "percentage": 69.4},
+      "packageVersion": "1.8.2"
+    }
+
+### Python
+```python
+import requests
+
+request_url = "https://iso3166-2-api.vercel.app/api/stats"
+
+stats_request = requests.get(request_url)
+stats_request.json()
+```
+
+### Javascript
+```javascript
+function getData() {
+  const response = await fetch('https://iso3166-2-api.vercel.app/api/stats')
+  const data = await response.json()
+}
+
+// Begin accessing JSON data here
+var data = JSON.parse(this.response)
+```
+
+Bulk subdivision lookup using a POST request
+--------------------------------------------
+Use `POST /api/subdivision` when you need to look up more codes than a URL can comfortably hold
+(roughly 100–150 codes before hitting browser/server URL length limits).
+
+### Request
+`POST /api/subdivision`
+
+    curl -i -X POST https://iso3166-2-api.vercel.app/api/subdivision \
+      -H "Content-Type: application/json" \
+      -d '{"codes": ["GB-ABD", "FR-75", "US-CA", "DE-BY"]}'
+
+### Response
+    HTTP/2 200
+    content-type: application/json
+
+    {"DE": {"DE-BY": {...}}, "FR": {"FR-75": {...}}, "GB": {"GB-ABD": {...}}, "US": {"US-CA": {...}}}
+
+### Python
+```python
+import requests
+
+request_url = "https://iso3166-2-api.vercel.app/api/subdivision"
+codes = ["GB-ABD", "FR-75", "US-CA", "DE-BY"]  # up to 500 codes
+
+post_request = requests.post(request_url, json={"codes": codes})
+post_request.json()
+```
+
+### Javascript
+```javascript
+const codes = ["GB-ABD", "FR-75", "US-CA", "DE-BY"]; // up to 500 codes
+
+async function getData() {
+  const response = await fetch('https://iso3166-2-api.vercel.app/api/subdivision', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ codes })
+  });
+  const data = await response.json();
+}
 ```
 
 [Back to top](#TOP)

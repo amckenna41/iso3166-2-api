@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: iso3166-2 API
-  version: "1.8.0"
+  version: "1.8.2"
   description: |
     REST API for ISO 3166-2 subdivision data (name, localOtherName, code, parentCode, type, latLng, flag, history).
     Base URL serves docs; all routes below are relative to /api.
@@ -54,13 +54,10 @@ components:
     Error:
       type: object
       properties:
-        error:
-          type: object
-          properties:
-            code: { type: string }
-            message: { type: string }
-          required: [code, message]
-      required: [error]
+        message: { type: string }
+        path: { type: string }
+        status: { type: integer }
+      required: [message, path, status]
     HistoryItem:
       type: object
       properties:
@@ -336,3 +333,61 @@ paths:
                 items: { type: string }
               example: ["DE-BB","DE-BE","DE-BW"]
         "400": { description: Invalid country code, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+  /random:
+    get:
+      tags: [Utility]
+      summary: Get a random subdivision
+      description: Returns one randomly selected subdivision from the full dataset, wrapped in the standard `{country_code: {subdivision_code: data}}` format.
+      parameters:
+        - $ref: "#/components/parameters/FilterAttributes"
+      responses:
+        "200":
+          description: A single randomly selected subdivision
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties:
+                  type: object
+                  additionalProperties:
+                    $ref: "#/components/schemas/Subdivision"
+              example:
+                US:
+                  US-CA: { name: "California", type: "state" }
+        "400": { description: Invalid filter parameter, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+  /coords:
+    get:
+      tags: [Search]
+      summary: Get subdivision by latitude/longitude
+      description: |
+        Reverse geocodes the given coordinates using OpenStreetMap Nominatim and returns the
+        matching ISO 3166-2 subdivision in the standard `{country_code: {subdivision_code: data}}` format.
+      parameters:
+        - name: lat
+          in: query
+          required: true
+          schema: { type: number, minimum: -90, maximum: 90 }
+          example: 51.5074
+        - name: lng
+          in: query
+          required: true
+          schema: { type: number, minimum: -180, maximum: 180 }
+          example: -0.1278
+        - $ref: "#/components/parameters/FilterAttributes"
+      responses:
+        "200":
+          description: Subdivision at the given coordinates
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties:
+                  type: object
+                  additionalProperties:
+                    $ref: "#/components/schemas/Subdivision"
+              example:
+                GB:
+                  GB-ENG: { name: "England", type: "country" }
+        "400": { description: Invalid or missing lat/lng parameters, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "404": { description: No subdivision found at coordinates, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "500": { description: Error connecting to OpenStreetMap API, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }

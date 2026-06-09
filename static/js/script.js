@@ -1,60 +1,39 @@
 let version = "";
 let lastUpdated = "";
 
-//make async request to pypi json endpoint to get the software's current version
-async function loadVersion() {
+//fetch version and latest-update date from PyPI in a single request
+async function loadPyPIData() {
     try {
         const response = await fetch("https://pypi.org/pypi/iso3166-2/json");
-        if (!response.ok) throw new Error("Failed to fetch version");
+        if (!response.ok) throw new Error("Failed to fetch PyPI metadata");
         const data = await response.json();
+
+        //extract current version
         version = data.info.version;
         console.log("Version: ", version);
-        // const versionElem = document.getElementById("version");
-        // if (versionElem) {
-        //     versionElem.innerHTML = "<b>Version: </b>" + version;
-        // }
-    } catch (error) {
-        console.error("Error fetching version:", error);
-    }
-}
 
-//make async request to pypi json endpoint to get the software's latest month update
-async function loadLatestUpdate() {
-    try {
-        const response = await fetch("https://pypi.org/pypi/iso3166-2/json");
-        if (!response.ok) throw new Error("Failed to fetch version metadata");
-        const data = await response.json();
-
-        const latestVersion = data.info.version;
-        const releaseFiles = data.releases[latestVersion];
-        
+        //extract upload date of the latest release
+        const releaseFiles = data.releases[version];
         if (!releaseFiles || releaseFiles.length === 0) {
-            throw new Error("No release files found for the latest version");
+            throw new Error("No release files found for version " + version);
         }
-
         const uploadTime = releaseFiles[0].upload_time_iso_8601 || releaseFiles[0].upload_time;
         const uploadDate = new Date(uploadTime);
-
-        // lastUpdated = (uploadDate.getUTCMonth() + 1) + uploadDate.getUTCFullYear()
         lastUpdated = new Intl.DateTimeFormat("en-US", {
             year: "numeric",
             month: "long"
         }).format(uploadDate);
-
         console.log("Last Updated: ", lastUpdated);
-        
+
     } catch (error) {
-        console.error("Error fetching update date:", error);
+        console.error("Error fetching PyPI data:", error);
     }
 }
 
 window.onload = async function(){ 
 
-    //pull iso3166-2 version from pypi
-    await loadVersion();
-
-    //pull iso3166-2 latest month and year from pypi
-    await loadLatestUpdate();
+    //pull iso3166-2 version and last-updated date from pypi in a single request
+    await loadPyPIData();
 
     //set version to its element after page load
     document.getElementById("version").innerHTML = "<b>Version: </b>" + version;

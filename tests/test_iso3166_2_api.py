@@ -1,6 +1,7 @@
 from pycountry import countries
-from iso3166_2 import *
+from iso3166_2 import Subdivisions
 import requests
+import json
 import os
 from fake_useragent import UserAgent
 from jsonschema import validate, ValidationError
@@ -54,6 +55,18 @@ class ISO3166_2_API_Tests(unittest.TestCase):
     test_list_subdivisions:
         testing correct data and attributes are returned from the /list_subdivisions API endpoint, which returns all 
         the ISO 3166-2 subdivision codes for each country or subset of input countries.
+    test_stats_endpoint:
+        testing that the /stats endpoint returns correct live statistics about the ISO 3166-2 dataset.
+    test_all_endpoint_pagination:
+        testing that the /all endpoint supports ?page= and ?pageSize= query parameters correctly.
+    test_subdivision_post_endpoint:
+        testing that the POST /subdivision endpoint correctly handles bulk subdivision code lookup via JSON body.
+    test_format_param:
+        testing that the ?format=csv and ?format=geojson query parameters return correctly formatted responses
+        from the /all, /alpha and /subdivision endpoints.
+    test_lang_param:
+        testing that the ?lang= query parameter correctly filters the localOtherName attribute to only include
+        entries matching the given ISO 639 language code.
     test_coords_endpoint:
         testing that the /coords endpoint returns correct subdivision data for input latitude and longitude coordinates.
     test_random_endpoint:
@@ -74,6 +87,7 @@ class ISO3166_2_API_Tests(unittest.TestCase):
         self.api_base_url = "https://iso3166-2-api.vercel.app/api/"
         self.alpha_base_url = self.api_base_url + "alpha/"
         self.subdivision_base_url = self.api_base_url + "subdivision/"
+        self.subdivision_post_url = self.api_base_url + "subdivision"
         self.search_base_url = self.api_base_url + "search/"
         self.search_geo_base_url = self.api_base_url + "search_geo/"
         self.country_name_base_url = self.api_base_url + "country_name/"
@@ -82,6 +96,7 @@ class ISO3166_2_API_Tests(unittest.TestCase):
         self.random_base_url = self.api_base_url + "random"
         self.coords_base_url = self.api_base_url + "coords"
         self.version_base_url = self.api_base_url + "version"
+        self.stats_base_url = self.api_base_url + "stats"
 
         #list of keys that should be in subdivisions key of output object
         self.correct_subdivision_keys = ["name", "localOtherName", "type", "parentCode", "latLng", "flag", "history"]
@@ -111,7 +126,7 @@ class ISO3166_2_API_Tests(unittest.TestCase):
         # last_updated = soup.find(id='last-updated').text.split(': ')[1]
         author = soup.find(id='author').text.split(': ')[1]
 
-        # self.assertEqual(version, "1.8.2", f"Expected API version to be 1.8.2, got {version}.") 
+        # self.assertEqual(version, "1.8.3", f"Expected API version to be 1.8.3, got {version}.") 
         # self.assertEqual(last_updated, "September 2025", f"Expected last updated date to be September 2025, got {last_updated}.")
         self.assertEqual(author, "AJ", f"Expected author to be AJ, got {author}.")
 #2.)
@@ -1037,21 +1052,23 @@ class ISO3166_2_API_Tests(unittest.TestCase):
         self.assertEqual(test_request_random.status_code, 200, f"Expected 200 status code from /api/random, got {test_request_random.status_code}.")
         self.assertEqual(test_request_random.headers["content-type"], "application/json", f"Expected Content type to be application/json, got {test_request_random.headers['content-type']}.")
 #2.)
-        # Verify the response structure - should have one subdivision code as key
+        # Verify the response structure - should be {country_code: {subdivision_code: data}}
         random_response = test_request_random.json()
         self.assertIsInstance(random_response, dict, f"Expected response to be of type dict, got {type(random_response)}.")
-        self.assertEqual(len(random_response), 1, f"Expected response to contain exactly 1 subdivision, got {len(random_response)}.")
+        self.assertEqual(len(random_response), 1, f"Expected response to contain exactly 1 country key, got {len(random_response)}.")
 #3.)
-        # Get the subdivision code and data
-        subdivision_code = list(random_response.keys())[0]
-        subdivision_data = random_response[subdivision_code]
-        
+        # Extract country code and the single nested subdivision
+        country_code = list(random_response.keys())[0]
+        self.assertIn(country_code, self.alpha2_codes, f"Country code {country_code} not found in list of available country codes.")
+        self.assertEqual(len(random_response[country_code]), 1, f"Expected exactly 1 subdivision inside country key, got {len(random_response[country_code])}.")
+        subdivision_code = list(random_response[country_code].keys())[0]
+        subdivision_data = random_response[country_code][subdivision_code]
+
         # Verify subdivision code format
         self.assertIsInstance(subdivision_code, str, f"Expected subdivision code to be of type str, got {type(subdivision_code)}.")
         self.assertRegex(subdivision_code, r"^[A-Z]{2}-[A-Z0-9]{1,3}$", f"Expected subdivision code to match format XX-Y/XX-YY/XX-YYY, got {subdivision_code}.")
 #4.)
-        # Extract country code from subdivision code
-        country_code = subdivision_code.split('-')[0]
+        # country_code is already validated in step 3 above
         self.assertIn(country_code, self.alpha2_codes, f"Country code {country_code} not found in list of available country codes.")
 #5.)
         # Verify the subdivision code exists in the dataset
@@ -1071,18 +1088,21 @@ class ISO3166_2_API_Tests(unittest.TestCase):
         random_codes = set()
         for _ in range(15):
             test_random_call = requests.get(self.random_base_url, headers=self.user_agent_header).json()
-            random_code = list(test_random_call.keys())[0]
+            # extract subdivision code from nested {country_code: {subdivision_code: data}} structure
+            rc = list(test_random_call.keys())[0]
+            random_code = list(test_random_call[rc].keys())[0]
             random_codes.add(random_code)
         self.assertGreater(len(random_codes), 1, "Expected multiple calls to /api/random to return different subdivisions (at least 2 unique out of 15 calls).")
 #9.)
         # Test the filter parameter works with random endpoint
         test_request_random_filter = requests.get(self.random_base_url, headers=self.user_agent_header, params={"filter": "name,type"})
         self.assertEqual(test_request_random_filter.status_code, 200, f"Expected 200 status code from /api/random with filter, got {test_request_random_filter.status_code}.")
-        
+
         random_filter_response = test_request_random_filter.json()
-        filtered_subdivision_code = list(random_filter_response.keys())[0]
-        filtered_subdivision_data = random_filter_response[filtered_subdivision_code]
-        self.assertEqual(sorted(list(filtered_subdivision_data.keys())), ["name", "type"], f"Expected filtered subdivision data to only contain name and type attributes, got {list(filtered_subdivision_data.keys())}.")
+        filter_country_code = list(random_filter_response.keys())[0]
+        filter_subdivision_code = list(random_filter_response[filter_country_code].keys())[0]
+        filter_subdivision_data = random_filter_response[filter_country_code][filter_subdivision_code]
+        self.assertEqual(sorted(list(filter_subdivision_data.keys())), ["name", "type"], f"Expected filtered subdivision data to only contain name and type attributes, got {list(filter_subdivision_data.keys())}.")
 #10.)
         # Test invalid filter parameter returns error
         test_request_random_invalid_filter = requests.get(self.random_base_url, headers=self.user_agent_header, params={"filter": "invalid_attribute"})
@@ -1092,14 +1112,15 @@ class ISO3166_2_API_Tests(unittest.TestCase):
         self.assertIn("message", error_response, "Expected error response to contain 'message' field.")
         self.assertIn("invalid_attribute", error_response["message"], "Expected error message to mention the invalid attribute.")
 #11.)
-        # Test the root /random endpoint (without /api prefix)
+        # Test the root /random endpoint (without /api prefix) also uses {country_code: {subdivision_code: data}}
         test_request_root_random = requests.get("https://iso3166-2-api.vercel.app/random", headers=self.user_agent_header)
         self.assertEqual(test_request_root_random.status_code, 200, f"Expected 200 status code from /random, got {test_request_root_random.status_code}.")
         root_random_response = test_request_root_random.json()
-        self.assertEqual(len(root_random_response), 1, f"Expected /random response to contain exactly 1 subdivision, got {len(root_random_response)}.")
+        self.assertEqual(len(root_random_response), 1, f"Expected /random response to contain exactly 1 country key, got {len(root_random_response)}.")
         
-        # Verify structure is correct
-        root_subdivision_code = list(root_random_response.keys())[0]
+        root_country_code = list(root_random_response.keys())[0]
+        self.assertEqual(len(root_random_response[root_country_code]), 1, f"Expected exactly 1 subdivision inside country key, got {len(root_random_response[root_country_code])}.")
+        root_subdivision_code = list(root_random_response[root_country_code].keys())[0]
         self.assertRegex(root_subdivision_code, r"^[A-Z]{2}-[A-Z0-9]{1,3}$", f"Expected subdivision code from /random to match format XX-Y/XX-YY/XX-YYY, got {root_subdivision_code}.")
 
     # @unittest.skip("")
@@ -1144,6 +1165,360 @@ class ISO3166_2_API_Tests(unittest.TestCase):
         iso3166_2_api_version = requests.get(self.version_base_url, headers=self.user_agent_header).content.decode("utf-8")
         self.assertEqual(iso3166_2_api_version, self.__version__, f"Expected and observed version of the iso3166-2 software do not match {iso3166_2_api_version}.")
 
+    # @unittest.skip("")
+    def test_stats_endpoint(self):
+        """ Testing the correct data and attributes are returned from the /stats API endpoint. """
+#1.)
+        test_request_stats = requests.get(self.stats_base_url, headers=self.user_agent_header)
+        self.assertEqual(test_request_stats.status_code, 200, f"Expected 200 status code from /api/stats, got {test_request_stats.status_code}.")
+        stats_data = test_request_stats.json()
+
+        expected_keys = ["totalCountries", "totalSubdivisions", "countriesWithSubdivisions",
+                         "countriesWithoutSubdivisions", "averageSubdivisionsPerCountry",
+                         "maxSubdivisions", "minSubdivisions", "flagCoverage", "packageVersion"]
+        for key in expected_keys:
+            self.assertIn(key, stats_data, f"Expected '{key}' key in /api/stats response.")
+#2.)
+        self.assertEqual(stats_data["totalCountries"], 249, f"Expected totalCountries to be 249, got {stats_data['totalCountries']}.")
+        self.assertIsInstance(stats_data["totalSubdivisions"], int, "Expected totalSubdivisions to be an integer.")
+        self.assertGreater(stats_data["totalSubdivisions"], 0, "Expected totalSubdivisions to be > 0.")
+        self.assertIsInstance(stats_data["averageSubdivisionsPerCountry"], (int, float), "Expected averageSubdivisionsPerCountry to be a number.")
+        self.assertGreater(stats_data["averageSubdivisionsPerCountry"], 0, "Expected averageSubdivisionsPerCountry to be > 0.")
+#3.)
+        self.assertIn("count", stats_data["flagCoverage"], "Expected flagCoverage to contain 'count' key.")
+        self.assertIn("percentage", stats_data["flagCoverage"], "Expected flagCoverage to contain 'percentage' key.")
+#4.)
+        self.assertIn("country", stats_data["maxSubdivisions"], "Expected maxSubdivisions to contain 'country' key.")
+        self.assertIn("count", stats_data["maxSubdivisions"], "Expected maxSubdivisions to contain 'count' key.")
+#5.)
+        self.assertEqual(stats_data["totalCountries"], stats_data["countriesWithSubdivisions"] + stats_data["countriesWithoutSubdivisions"],
+                         "Expected totalCountries to equal countriesWithSubdivisions + countriesWithoutSubdivisions.")
+
+    # @unittest.skip("")
+    def test_all_endpoint_pagination(self):
+        """ Testing the /all endpoint supports ?page= and ?pageSize= query parameters. """
+#1.)
+        test_request_page = requests.get(self.all_base_url, headers=self.user_agent_header, params={"page": 1, "pageSize": 10})
+        self.assertEqual(test_request_page.status_code, 200, f"Expected 200 status code from /api/all?page=1&pageSize=10, got {test_request_page.status_code}.")
+        page_data = test_request_page.json()
+        for key in ["data", "page", "pageSize", "totalPages", "totalCountries"]:
+            self.assertIn(key, page_data, f"Expected '{key}' key in paginated /api/all response.")
+        self.assertEqual(page_data["page"], 1, f"Expected page=1, got {page_data['page']}.")
+        self.assertEqual(page_data["pageSize"], 10, f"Expected pageSize=10, got {page_data['pageSize']}.")
+        self.assertIsInstance(page_data["data"], dict, "Expected 'data' in paginated response to be a dict.")
+        self.assertEqual(len(page_data["data"]), 10, f"Expected 10 countries in page, got {len(page_data['data'])}.")
+#2.)
+        test_request_page2 = requests.get(self.all_base_url, headers=self.user_agent_header, params={"page": 2, "pageSize": 10})
+        self.assertEqual(test_request_page2.status_code, 200, f"Expected 200 status code from /api/all?page=2&pageSize=10.")
+        page2_data = test_request_page2.json()
+        self.assertEqual(page2_data["page"], 2, f"Expected page=2, got {page2_data['page']}.")
+        self.assertNotEqual(set(page_data["data"].keys()), set(page2_data["data"].keys()), "Expected page 1 and page 2 to return different countries.")
+#3.)
+        test_request_page_invalid = requests.get(self.all_base_url, headers=self.user_agent_header, params={"page": 0, "pageSize": 10})
+        self.assertEqual(test_request_page_invalid.status_code, 400, f"Expected 400 for page=0, got {test_request_page_invalid.status_code}.")
+#4.)
+        test_request_pagesize_invalid = requests.get(self.all_base_url, headers=self.user_agent_header, params={"page": 1, "pageSize": 0})
+        self.assertEqual(test_request_pagesize_invalid.status_code, 400, f"Expected 400 for pageSize=0, got {test_request_pagesize_invalid.status_code}.")
+#5.)
+        test_request_pagesize_toobig = requests.get(self.all_base_url, headers=self.user_agent_header, params={"page": 1, "pageSize": 999})
+        self.assertEqual(test_request_pagesize_toobig.status_code, 400, f"Expected 400 for pageSize=999, got {test_request_pagesize_toobig.status_code}.")
+
+    # @unittest.skip("")
+    def test_subdivision_post_endpoint(self):
+        """ Testing the POST /subdivision endpoint handles bulk subdivision code lookup. """
+#1.)
+        test_codes = ["GB-ABD", "FR-75", "US-CA", "DE-BY"]
+        test_post_request = requests.post(self.subdivision_post_url, json={"codes": test_codes}, headers=self.user_agent_header)
+        self.assertEqual(test_post_request.status_code, 200, f"Expected 200 status code from POST /api/subdivision, got {test_post_request.status_code}.")
+        post_data = test_post_request.json()
+        for country in ["GB", "FR", "US", "DE"]:
+            self.assertIn(country, post_data, f"Expected country code '{country}' in POST /api/subdivision response.")
+        self.assertIn("GB-ABD", post_data["GB"], "Expected 'GB-ABD' in response.")
+        self.assertIn("FR-75", post_data["FR"], "Expected 'FR-75' in response.")
+#2.)
+        test_post_empty = requests.post(self.subdivision_post_url, json={"codes": []}, headers=self.user_agent_header)
+        self.assertEqual(test_post_empty.status_code, 400, f"Expected 400 for empty codes list, got {test_post_empty.status_code}.")
+#3.)
+        test_post_over_limit = requests.post(self.subdivision_post_url, json={"codes": ["GB-ABD"] * 501}, headers=self.user_agent_header)
+        self.assertEqual(test_post_over_limit.status_code, 400, f"Expected 400 for >500 codes, got {test_post_over_limit.status_code}.")
+#4.)
+        test_post_no_body = requests.post(self.subdivision_post_url, json={}, headers=self.user_agent_header)
+        self.assertEqual(test_post_no_body.status_code, 400, f"Expected 400 for missing codes key, got {test_post_no_body.status_code}.")
+
+    # @unittest.skip("")
+    def test_format_param(self):
+        """ Testing the ?format= query parameter returns correctly formatted responses. """
+#1.)
+        test_request_csv = requests.get(self.alpha_base_url + "AU", headers=self.user_agent_header, params={"format": "csv"})
+        self.assertEqual(test_request_csv.status_code, 200, f"Expected 200 status code from /api/alpha/AU?format=csv, got {test_request_csv.status_code}.")
+        self.assertIn("text/csv", test_request_csv.headers.get("content-type", ""), f"Expected text/csv content-type, got {test_request_csv.headers.get('content-type')}.")
+        csv_text = test_request_csv.text
+        header_row = csv_text.splitlines()[0]
+        for expected_col in ["subdivisionCode", "countryCode", "name", "type", "latLng", "flag"]:
+            self.assertIn(expected_col, header_row, f"Expected CSV header to contain '{expected_col}'.")
+#2.)
+        test_request_geojson = requests.get(self.alpha_base_url + "FR", headers=self.user_agent_header, params={"format": "geojson"})
+        self.assertEqual(test_request_geojson.status_code, 200, f"Expected 200 status code from /api/alpha/FR?format=geojson, got {test_request_geojson.status_code}.")
+        self.assertIn("geo+json", test_request_geojson.headers.get("content-type", ""), f"Expected application/geo+json content-type, got {test_request_geojson.headers.get('content-type')}.")
+        geojson_data = test_request_geojson.json()
+        self.assertEqual(geojson_data["type"], "FeatureCollection", f"Expected GeoJSON type to be FeatureCollection, got {geojson_data['type']}.")
+        self.assertIn("features", geojson_data, "Expected 'features' key in GeoJSON response.")
+        self.assertIsInstance(geojson_data["features"], list, "Expected GeoJSON features to be a list.")
+#3.)
+        # Verify GeoJSON feature structure for a subdivision with known coords
+        geojson_features_with_coords = [f for f in geojson_data["features"] if f.get("geometry") is not None]
+        if geojson_features_with_coords:
+            sample_feature = geojson_features_with_coords[0]
+            self.assertEqual(sample_feature["type"], "Feature", "Expected GeoJSON feature type to be 'Feature'.")
+            self.assertIn("properties", sample_feature, "Expected GeoJSON feature to have 'properties'.")
+            self.assertIn("geometry", sample_feature, "Expected GeoJSON feature to have 'geometry'.")
+            self.assertEqual(sample_feature["geometry"]["type"], "Point", "Expected GeoJSON geometry type to be 'Point'.")
+            coords = sample_feature["geometry"]["coordinates"]
+            self.assertEqual(len(coords), 2, "Expected GeoJSON Point coordinates to have 2 elements [lng, lat].")
+#4.)
+        test_request_all_csv = requests.get(self.all_base_url, headers=self.user_agent_header, params={"format": "csv", "limit": 5})
+        self.assertEqual(test_request_all_csv.status_code, 200, f"Expected 200 from /api/all?format=csv&limit=5, got {test_request_all_csv.status_code}.")
+        self.assertIn("text/csv", test_request_all_csv.headers.get("content-type", ""), "Expected text/csv for /api/all?format=csv.")
+#5.)
+        test_request_invalid_format = requests.get(self.alpha_base_url + "DE", headers=self.user_agent_header, params={"format": "xml"})
+        self.assertEqual(test_request_invalid_format.status_code, 400, f"Expected 400 for unsupported format=xml, got {test_request_invalid_format.status_code}.")
+
+    # @unittest.skip("")
+    def test_lang_param(self):
+        """ Testing the ?lang= query parameter correctly filters localOtherName entries. """
+        import re
+#1.)
+        test_request_lang_deu = requests.get(self.alpha_base_url + "DE", headers=self.user_agent_header, params={"lang": "deu"})
+        self.assertEqual(test_request_lang_deu.status_code, 200, f"Expected 200 status code from /api/alpha/DE?lang=deu, got {test_request_lang_deu.status_code}.")
+        lang_deu_data = test_request_lang_deu.json()
+        for subd_code, subd in lang_deu_data.items():
+            local_name = subd.get("localOtherName")
+            if local_name is not None:
+                self.assertIn("deu", local_name, f"Expected all localOtherName entries for {subd_code} to contain '(deu)', got: {local_name}.")
+#2.)
+        test_request_lang_fra = requests.get(self.alpha_base_url + "FR", headers=self.user_agent_header, params={"lang": "fra"})
+        self.assertEqual(test_request_lang_fra.status_code, 200, f"Expected 200 status code from /api/alpha/FR?lang=fra, got {test_request_lang_fra.status_code}.")
+        lang_fra_data = test_request_lang_fra.json()
+        for subd_code, subd in lang_fra_data.items():
+            local_name = subd.get("localOtherName")
+            if local_name is not None:
+                self.assertIn("fra", local_name, f"Expected all localOtherName entries for {subd_code} to contain '(fra)', got: {local_name}.")
+#3.)
+        test_request_lang_invalid = requests.get(self.alpha_base_url + "DE", headers=self.user_agent_header, params={"lang": "xyz"})
+        self.assertEqual(test_request_lang_invalid.status_code, 400, f"Expected 400 for unsupported lang=xyz, got {test_request_lang_invalid.status_code}.")
+
 if __name__ == '__main__':
     #run all unit tests
-    unittest.main(verbosity=2)  
+    unittest.main(verbosity=2)
+
+
+class ISO3166_2_API_Local_Tests(unittest.TestCase):
+    """
+    Local test suite for the ISO 3166-2 API using Flask's test client.
+    These tests run without internet access and without a live deployment.
+    """
+    @classmethod
+    def setUpClass(cls):
+        """ Import the Flask app and create a shared test client. """
+        import sys
+        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        from index import app
+        app.config['TESTING'] = True
+        cls.client = app.test_client()
+        cls.correct_subdivision_keys = ["name", "localOtherName", "type", "parentCode", "latLng", "flag", "history"]
+
+    def test_homepage_local(self):
+        """ Test that the homepage returns 200 with HTML content. """
+        response = self.client.get('/api')
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b'ISO 3166', response.data)
+
+    def test_all_local(self):
+        """ Test /api/all returns a dict of all countries. """
+        response = self.client.get('/api/all')
+        self.assertEqual(response.status_code, 200)
+        data = json.loads(response.data)
+        self.assertIsInstance(data, dict)
+        self.assertGreater(len(data), 200)
+
+    def test_all_limit_local(self):
+        """ Test /api/all with limit query param returns the correct number of countries. """
+        response = self.client.get('/api/all?limit=5')
+        self.assertEqual(response.status_code, 200)
+        data = json.loads(response.data)
+        self.assertEqual(len(data), 5)
+
+    def test_all_filter_local(self):
+        """ Test /api/all with filter query param returns only the requested attributes. """
+        response = self.client.get('/api/all?filter=name,type&limit=3')
+        self.assertEqual(response.status_code, 200)
+        data = json.loads(response.data)
+        for country in data:
+            for subd in data[country]:
+                self.assertEqual(sorted(data[country][subd].keys()), ['name', 'type'])
+
+    def test_alpha_local(self):
+        """ Test /api/alpha with a valid alpha-2 code returns subdivision data. """
+        response = self.client.get('/api/alpha/AU')
+        self.assertEqual(response.status_code, 200)
+        data = json.loads(response.data)
+        self.assertIn('AU-NSW', data)
+        for subd in data:
+            for key in data[subd].keys():
+                self.assertIn(key, self.correct_subdivision_keys)
+
+    def test_alpha_error_local(self):
+        """ Test /api/alpha with an invalid code returns 400 with an error. """
+        response = self.client.get('/api/alpha/ZZZ')
+        self.assertEqual(response.status_code, 400)
+        data = json.loads(response.data)
+        self.assertIn('message', data)
+        self.assertEqual(data['status'], 400)
+
+    def test_subdivision_local(self):
+        """ Test /api/subdivision with a valid code returns the correct subdivision data. """
+        response = self.client.get('/api/subdivision/JM-05')
+        self.assertEqual(response.status_code, 200)
+        data = json.loads(response.data)
+        self.assertIn('JM', data)
+        self.assertIn('JM-05', data['JM'])
+        self.assertEqual(data['JM']['JM-05']['name'], 'Saint Mary')
+
+    def test_subdivision_error_local(self):
+        """ Test /api/subdivision with an invalid code returns 400. """
+        response = self.client.get('/api/subdivision/XX-YY')
+        self.assertEqual(response.status_code, 400)
+
+    def test_search_local(self):
+        """ Test /api/search with a valid term returns at least one result. """
+        response = self.client.get('/api/search/Delaware')
+        self.assertEqual(response.status_code, 200)
+        data = json.loads(response.data)
+        self.assertIsInstance(data, dict)
+        self.assertGreater(len(data), 0)
+
+    def test_country_name_local(self):
+        """ Test /api/country_name with a valid name returns subdivision data. """
+        response = self.client.get('/api/country_name/Australia')
+        self.assertEqual(response.status_code, 200)
+        data = json.loads(response.data)
+        self.assertIn('AU', data)
+
+    def test_list_subdivisions_local(self):
+        """ Test /api/list_subdivisions for a specific country returns a list of codes. """
+        response = self.client.get('/api/list_subdivisions/DE')
+        self.assertEqual(response.status_code, 200)
+        data = json.loads(response.data)
+        self.assertIsInstance(data, list)
+        self.assertEqual(len(data), 16)
+
+    def test_random_local(self):
+        """ Test /api/random returns {country_code: {subdivision_code: data}} with valid data. """
+        response = self.client.get('/api/random')
+        self.assertEqual(response.status_code, 200)
+        data = json.loads(response.data)
+        self.assertIsInstance(data, dict)
+        self.assertEqual(len(data), 1)  # one country code
+        country_code = list(data.keys())[0]
+        self.assertEqual(len(data[country_code]), 1)  # one subdivision
+        subdivision_code = list(data[country_code].keys())[0]
+        self.assertRegex(subdivision_code, r"^[A-Z]{2}-[A-Z0-9]{1,3}$")
+
+    def test_clear_cache_unauthorized_local(self):
+        """ Test /api/clear-cache without a token returns 401. """
+        response = self.client.get('/api/clear-cache')
+        self.assertEqual(response.status_code, 401)
+        data = json.loads(response.data)
+        self.assertIn('message', data)
+
+    def test_404_local(self):
+        """ Test unknown routes return 404. """
+        response = self.client.get('/api/nonexistent_route_xyz')
+        self.assertEqual(response.status_code, 404)
+
+    def test_stats_local(self):
+        """ Test /api/stats returns correct schema and sensible values. """
+        response = self.client.get('/api/stats')
+        self.assertEqual(response.status_code, 200)
+        data = json.loads(response.data)
+        for key in ["totalCountries", "totalSubdivisions", "countriesWithSubdivisions",
+                    "countriesWithoutSubdivisions", "averageSubdivisionsPerCountry",
+                    "maxSubdivisions", "minSubdivisions", "flagCoverage", "packageVersion"]:
+            self.assertIn(key, data, f"Expected '{key}' in /api/stats response.")
+        self.assertEqual(data["totalCountries"], data["countriesWithSubdivisions"] + data["countriesWithoutSubdivisions"])
+        self.assertGreater(data["totalSubdivisions"], 0)
+
+    def test_all_pagination_local(self):
+        """ Test /api/all?page=1&pageSize=10 returns paginated envelope. """
+        response = self.client.get('/api/all?page=1&pageSize=10')
+        self.assertEqual(response.status_code, 200)
+        data = json.loads(response.data)
+        for key in ["data", "page", "pageSize", "totalPages", "totalCountries"]:
+            self.assertIn(key, data, f"Expected '{key}' in paginated /api/all response.")
+        self.assertEqual(data["page"], 1)
+        self.assertEqual(data["pageSize"], 10)
+        self.assertEqual(len(data["data"]), 10)
+
+    def test_all_pagination_invalid_local(self):
+        """ Test /api/all with invalid page/pageSize returns 400. """
+        self.assertEqual(self.client.get('/api/all?page=0&pageSize=10').status_code, 400)
+        self.assertEqual(self.client.get('/api/all?page=1&pageSize=0').status_code, 400)
+        self.assertEqual(self.client.get('/api/all?page=1&pageSize=999').status_code, 400)
+
+    def test_subdivision_post_local(self):
+        """ Test POST /api/subdivision with valid codes returns correct data. """
+        response = self.client.post('/api/subdivision', json={"codes": ["AU-NSW", "DE-BY"]},
+                                    content_type='application/json')
+        self.assertEqual(response.status_code, 200)
+        data = json.loads(response.data)
+        self.assertIn("AU", data)
+        self.assertIn("DE", data)
+        self.assertIn("AU-NSW", data["AU"])
+        self.assertIn("DE-BY", data["DE"])
+
+    def test_subdivision_post_empty_local(self):
+        """ Test POST /api/subdivision with empty codes list returns 400. """
+        self.assertEqual(self.client.post('/api/subdivision', json={"codes": []},
+                                          content_type='application/json').status_code, 400)
+
+    def test_subdivision_post_over_limit_local(self):
+        """ Test POST /api/subdivision with >500 codes returns 400. """
+        self.assertEqual(self.client.post('/api/subdivision', json={"codes": ["GB-ABD"] * 501},
+                                          content_type='application/json').status_code, 400)
+
+    def test_format_csv_local(self):
+        """ Test ?format=csv returns text/csv with expected header columns. """
+        response = self.client.get('/api/alpha/AU?format=csv')
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('text/csv', response.content_type)
+        csv_text = response.data.decode('utf-8')
+        header_row = csv_text.splitlines()[0]
+        for col in ["subdivisionCode", "countryCode", "name", "type"]:
+            self.assertIn(col, header_row)
+
+    def test_format_geojson_local(self):
+        """ Test ?format=geojson returns application/geo+json FeatureCollection. """
+        response = self.client.get('/api/alpha/FR?format=geojson')
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('geo+json', response.content_type)
+        data = json.loads(response.data)
+        self.assertEqual(data["type"], "FeatureCollection")
+        self.assertIn("features", data)
+
+    def test_format_invalid_local(self):
+        """ Test ?format=xml returns 400. """
+        self.assertEqual(self.client.get('/api/alpha/DE?format=xml').status_code, 400)
+
+    def test_lang_local(self):
+        """ Test ?lang= filters localOtherName to matching entries only. """
+        response = self.client.get('/api/alpha/DE?lang=deu')
+        self.assertEqual(response.status_code, 200)
+        data = json.loads(response.data)
+        for subd_code, subd in data.items():
+            local_name = subd.get("localOtherName")
+            if local_name is not None:
+                self.assertIn("deu", local_name, f"Expected 'deu' tag in localOtherName for {subd_code}, got: {local_name}.")
+
+    def test_lang_invalid_local(self):
+        """ Test ?lang=xyz (unsupported code) returns 400. """
+        self.assertEqual(self.client.get('/api/alpha/DE?lang=xyz').status_code, 400)
