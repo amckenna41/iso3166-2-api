@@ -107,7 +107,14 @@ The other endpoints available in the API are:
 * https://iso3166-2-api.vercel.app/api/search_geo/{input_latlng}
 * https://iso3166-2-api.vercel.app/api/country_name/{input_country_name}
 * https://iso3166-2-api.vercel.app/api/list_subdivisions or https://iso3166-2-api.vercel.app/api/list_subdivisions/{input_alpha_code}
+* https://iso3166-2-api.vercel.app/api/coords?lat={latitude}&lng={longitude}
+* https://iso3166-2-api.vercel.app/api/random
 * https://iso3166-2-api.vercel.app/api/stats
+* https://iso3166-2-api.vercel.app/api/spec
+
+The API is CORS enabled (`Access-Control-Allow-Origin: *`), so it can be called directly from browser JavaScript on any origin without a proxy. Successful GET data
+responses include `Cache-Control: public, max-age=3600` and an `ETag`, so sending that ETag back in an `If-None-Match` header returns a 304 Not Modified rather than
+re-downloading the payload. The supported query string parameters are `filter`, `likeness`, `excludeMatchScore`, `limit`, `radius`, `format`, `lang`, `page` and `pageSize`.
 
 Please refer to the [`API.md`](https://github.com/amckenna41/iso3166-2-api/API.md) file for API usage examples.
 
@@ -120,12 +127,13 @@ The [`iso3166-updates`](https://github.com/amckenna41/iso3166-updates) repo is a
 The list of ISO 3166 updates was last updated on <strong>June 2024</strong>. A log of the latest ISO 3166 updates can be seen in the [UPDATES.md][updates_md]. -->
 
 ## Requirements
-* [python][python] >= 3.9
-* [flask][flask] >= 2.3.2
-* [requests][requests] >= 2.28.1
-* [iso3166-2][iso3166_2] >= 1.8.0
-* [unidecode][unidecode] >= 1.3.8
-* [thefuzz][thefuzz] >= 0.22.1
+* [python][python] >= 3.10
+* [flask][flask] >= 3.0, < 4.0
+* [requests][requests] >= 2.32, < 3.0
+* [iso3166-2][iso3166_2] >= 1.8.4, < 1.9.0
+* [unidecode][unidecode] >= 1.3, < 2.0
+* [thefuzz][thefuzz] >= 0.22, < 1.0
+* [pycountry][pycountry] >= 24.6, < 25.0
 
 ## Issues
 Any issues, errors or enhancements can be raised via the [Issues](https://github.com/amckenna41/iso3166-2-api/issues) tab in the repository.
@@ -163,6 +171,7 @@ Below are some of my other custom-built repositories that relate to the ISO 3166
 [iso3166_2]: https://github.com/amckenna41/iso3166-2
 [unidecode]: https://pypi.org/project/Unidecode/
 [thefuzz]: https://github.com/seatgeek/thefuzz/tree/master
+[pycountry]: https://pypi.org/project/pycountry/
 [google-auth]: https://cloud.google.com/python/docs/reference
 [google-cloud-storage]: https://cloud.google.com/python/docs/reference
 [google-api-python-client]: https://cloud.google.com/python/docs/reference

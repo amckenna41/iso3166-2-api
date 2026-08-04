@@ -37,7 +37,15 @@ The other endpoints available in the API are:
 * `/api/list_subdivisions`: get list of all the subdivision codes for all countries. You can also get the list of subdivisions from a subset of 
 countries via their ISO 3166-1 country code.
 
+* `/api/coords`: get the ISO 3166 subdivision data for a given latitude/longitude via reverse geocoding, e.g `/api/coords?lat=51.5074&lng=-0.1278`. Both the `lat` and `lng` query string parameters are required. The endpoint uses the OpenStreetMap Nominatim service to resolve the coordinates to a subdivision; if that service is unavailable or has no ISO 3166-2 code for the location, the API falls back to the geographically closest subdivision in its own dataset, so a valid coordinate always returns a result. This endpoint is rate limited, see [Rate Limits](#rate-limits).
+
+* `/api/random`: get a single randomly selected subdivision from the >5000 available, returned in the standard `{country_code: {subdivision_code: data}}` format. Served with `Cache-Control: no-store` so every call returns a fresh selection.
+
 * `/api/stats`: get live statistics about the ISO 3166-2 dataset — total countries, total subdivisions, countries with/without subdivisions, average subdivisions per country, flag coverage, and the current package version.
+
+* `/api/version`: get the version of the `iso3166-2` package the API is currently serving data from, returned as `{"version": "1.8.4"}`. Mainly used for development.
+
+* `/api/clear-cache`: `POST` only. Drops the cached dataset so the next request reloads it. Requires the `CACHE_CLEAR_TOKEN` value in an `X-Cache-Clear-Token` header, returning a `401` otherwise. Mainly used for development.
 
 ### Query String Parameters
 There are several query string parameters that can be passed through several of the endpoints of the API:
@@ -47,13 +55,35 @@ inputted search terms have to match to the subdivision data in the subdivision c
 having a lower value will return less exact but more total matches, e.g ``/api/search/Paris?likeness=50``, 
 ``/api/country_name/Tajikist?likeness=90`` (default=100). **Note:** if using the `iso3166-2` Python package directly, the equivalent function parameter is named `likeness_score` (not `likeness`).
 * **filterAttributes** - this is a list of the default supported attributes that you want to include in the output. By default all attributes will be returned but this parameter is useful if you only require a subset of attributes. Supported by **all data endpoints** including `/api/all`, e.g `api/all?filter=name,latLng`, `api/alpha/DEU?filter=latLng,flag`, `api/subdivision/PL-02?filter=localOtherName`.
-* **excludeMatchScore** - this allows you to exclude the matchScore attribute from the search results when using the `/api/search endpoint`. The match score is the % of a match each returned subdivision data object is to the search terms, with 100% being an exact match. By default the match score is returned for each object, e.g `/api/search/Bucharest?excludeMatchScore=1`, ``/api/search/Oregon?excludeMatchScore=1`` (default=0).
+* **excludeMatchScore** - this allows you to exclude the matchScore attribute from the search results when using the `/api/search endpoint`. The match score is the % of a match each returned subdivision data object is to the search terms, with 100% being an exact match. By default the match score is **excluded** from the results; set `excludeMatchScore=0` to include it, e.g `/api/search/Bucharest?excludeMatchScore=0`. When included, the results are returned as a list ordered by descending match score rather than as a nested object.
 * **limit** - this allows you to limit the total number of countries returned from the API call. This is only available in the `/api/all` endpoint. When calling the endpoint, all of the available data is called so this param allows you to get a faster small subset of the data. The first X country subdivision data will be returned. 
 * **radius** - search radius in kilometers for the `/api/search_geo` endpoint. Default is 50 km.
-* **format** (`?format=json|csv|geojson`) - output format for the response. Default is `json`. `csv` returns a downloadable CSV file with one row per subdivision. `geojson` returns a GeoJSON FeatureCollection with lat/lng stored as Point geometry (compatible with QGIS, Mapbox, Leaflet, etc.). Supported on `/api/all`, `/api/alpha`, `/api/subdivision`, `/api/search`, and `/api/country_name`.
-* **lang** (`?lang=<ISO639code>`) - filter the `localOtherName` attribute to only include entries in the specified ISO 639 language code (e.g. `?lang=fra` for French, `?lang=deu` for German). Supported on all data endpoints, e.g `/api/all?lang=fra`, `/api/alpha/DE?lang=deu`.
-* **page** (`?page=N`) - page number for paginated `/api/all` responses (1-indexed). Only activates pagination when `?page` or `?pageSize` is explicitly provided. The paginated response wraps the data in a `{"data": {...}, "page": N, "pageSize": N, "totalPages": N, "totalCountries": N}` envelope.
+* **format** (`?format=json|csv|geojson`) - output format for the response. Default is `json`. `csv` returns a downloadable CSV file with one row per subdivision. `geojson` returns a GeoJSON FeatureCollection with lat/lng stored as Point geometry (compatible with QGIS, Mapbox, Leaflet, etc.). Supported on `/api/all`, `/api/alpha`, `/api/subdivision` (GET and POST), `/api/search`, `/api/search_geo`, `/api/country_name`, `/api/coords` and `/api/random`. `/api/list_subdivisions` supports `json` and `csv` only, as it returns codes rather than subdivision attributes; its CSV output has `countryCode,subdivisionCode` columns.
+* **lang** (`?lang=<ISO639code>`) - filter the `localOtherName` attribute to only include entries in the specified ISO 639 language code (e.g. `?lang=fra` for French, `?lang=deu` for German). Supported on all data endpoints, e.g `/api/all?lang=fra`, `/api/alpha/DE?lang=deu`. An unrecognised ISO 639 code returns a 400 error.
+* **page** (`?page=N`) - page number for paginated `/api/all` responses (1-indexed). Only activates pagination when `?page` or `?pageSize` is explicitly provided. The paginated response wraps the data in a `{"data": {...}, "page": N, "pageSize": N, "totalPages": N, "totalCountries": N}` envelope. Pagination is applied *before* the format conversion, so combining it with `?format=csv` or `?format=geojson` returns only the requested page; those formats have no envelope for the metadata, so it is returned in the `X-Page`, `X-Page-Size`, `X-Total-Pages` and `X-Total-Countries` response headers instead.
 * **pageSize** (`?pageSize=N`) - number of countries per page for paginated `/api/all` responses. Accepts 1–250 (default 50).
+
+### Response Headers, CORS & Caching
+
+* **CORS** - all responses include `Access-Control-Allow-Origin: *`, so the API can be called directly from browser JavaScript on any origin. No proxy is required.
+* **Caching** - successful `GET` data responses include `Cache-Control: public, max-age=3600` and an `ETag`. Sending the ETag back in an `If-None-Match` request header returns a `304 Not Modified` with an empty body instead of re-downloading the payload, which is worth doing for the larger endpoints such as `/api/all` (~2.6 MB). `/api/random` is the one exception and is served with `Cache-Control: no-store`, as a cached response would return the same "random" subdivision to every caller until it expired.
+
+```bash
+# first request returns the data plus an ETag
+curl -i https://iso3166-2-api.vercel.app/api/alpha/DE
+
+# subsequent request returns 304 Not Modified if the data has not changed
+curl -i -H 'If-None-Match: "<etag-from-previous-response>"' https://iso3166-2-api.vercel.app/api/alpha/DE
+```
+
+### Rate Limits
+
+Two endpoints are rate limited per caller, both returning a `429` when the limit is exceeded:
+
+* `/api/coords` proxies the third-party OpenStreetMap Nominatim service and is limited to **30 requests per minute per IP** (configurable via the `COORDS_RATE_LIMIT` environment variable). Responses are cached for 24 hours, so repeated lookups of the same coordinates do not count against the upstream provider.
+* `/api/all` returns the entire dataset (~2.6 MB) in a single response and is limited to **300 requests per minute per IP** (configurable via the `ALL_RATE_LIMIT` environment variable). The limit is deliberately generous and is intended to bound abuse rather than throttle normal use; sending the `ETag` back in an `If-None-Match` header avoids re-downloading the payload entirely.
+
+All other endpoints are served from local data and are not rate limited.
 
 > A demo of the software and API is available [here][demo].
 
@@ -679,7 +709,7 @@ Get live statistics about the ISO 3166-2 dataset
       "maxSubdivisions": {"country": "GB", "count": 221},
       "minSubdivisions": {"country": "AD", "count": 7},
       "flagCoverage": {"count": 3501, "percentage": 69.4},
-      "packageVersion": "1.8.2"
+      "packageVersion": "1.8.4"
     }
 
 ### Python

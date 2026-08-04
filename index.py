@@ -1,11 +1,12 @@
 from flask import Flask, request, render_template, jsonify, send_from_directory, Response
-from urllib.parse import unquote_plus, unquote
 from iso3166_2 import Subdivisions
 import re
 import os
 import csv
 import io
 import json
+import hmac
+import time
 import requests
 from pycountry import countries, languages as pycountry_languages
 from thefuzz import process
@@ -28,7 +29,8 @@ from math import radians, sin, cos, sqrt, atan2, ceil
 /api/random - return a random subdivision from the dataset
 /api/stats - return statistics about the ISO 3166-2 dataset
 /api/version - get current version of iso3166-2 package being used by the API (mainly for dev)
-/api/clear-cache - clear the cached Subdivisions class instance and all cached subdivision data (mainly for dev)
+/api/clear-cache - clear the cached Subdivisions class instance and all cached subdivision data (POST,
+requires the CACHE_CLEAR_TOKEN value in the X-Cache-Clear-Token header, mainly for dev)
 /api/search_geo/<input_latlng> - search subdivision data by approximate lat/lng (latLng attribute)
 '''
 #################################################################################################################################
@@ -48,14 +50,34 @@ excludeMatchScore - this allows you to exclude the matchScore attribute from the
 The match score is the % of a match each returned subdivision data object is to the search terms, with 100% being an exact match. By 
 default the match score is returned for each object, e.g /api/search/Bucharest?excludeMatchScore=1, 
 /api/search/Oregon?excludeMatchScore=1 (default=0).
-format (?format=json|csv|geojson) - output format for the response. Default is json. csv returns a downloadable CSV file with one 
-row per subdivision. geojson returns a GeoJSON FeatureCollection (lat/lng stored as Point geometry). Supported on /api/all, 
-/api/alpha, /api/subdivision, /api/search and /api/country_name.
-lang (?lang=<ISO639code>) - filter the localOtherName attribute to only include entries in the specified ISO 639 language, e.g 
-/api/all?lang=fra, /api/alpha/DE?lang=deu. Supported on all data endpoints.
+format (?format=json|csv|geojson) - output format for the response. Default is json. csv returns a downloadable CSV file with one
+row per subdivision. geojson returns a GeoJSON FeatureCollection (lat/lng stored as Point geometry). Supported on /api/all,
+/api/alpha, /api/subdivision (GET and POST), /api/search, /api/search_geo, /api/country_name, /api/coords and /api/random.
+/api/list_subdivisions supports json and csv only, as it returns codes rather than subdivision attributes.
+lang (?lang=<ISO639code>) - filter the localOtherName attribute to only include entries in the specified ISO 639 language, e.g
+/api/all?lang=fra, /api/alpha/DE?lang=deu. An unrecognised ISO 639 code returns a 400. Supported on all data endpoints.
+limit (?limit=N) - limit the number of countries returned by /api/all to the first N, e.g /api/all?limit=10.
 page (?page=N) - page number for paginated /api/all responses (1-indexed, default=1). Only active when ?page or ?pageSize is set.
 pageSize (?pageSize=N) - number of countries per page for paginated /api/all responses (1-250, default=50).
+Pagination is applied before the format conversion, so ?format=csv&page=2 returns that page rather than the whole dataset. csv and
+geojson have no envelope for the metadata, so it is returned in the X-Page, X-Page-Size, X-Total-Pages and X-Total-Countries headers.
+radius (?radius=N) - search radius in km for /api/search_geo (default=50).
 '''
+
+########################################################## Rate Limiting ######################################################
+'''
+/api/coords proxies the OpenStreetMap Nominatim API, which caps callers at roughly 1 request/second, and /api/all serves the whole
+~2.5MB dataset in one response. Both are rate limited per caller and return a 429 once the limit is exceeded. The limits are set
+via the COORDS_RATE_LIMIT (default 30/min) and ALL_RATE_LIMIT (default 300/min) environment variables.
+'''
+
+##################################################### Response Headers ########################################################
+'''
+All responses include permissive CORS headers (Access-Control-Allow-Origin: *) as this is a public read-only API.
+Successful GET data responses carry Cache-Control: public, max-age=3600 and an ETag, so callers sending If-None-Match get
+a 304 Not Modified rather than re-downloading the payload.
+'''
+###############################################################################################################################
 ###############################################################################################################################
 
 #initialise Flask app
@@ -109,6 +131,64 @@ NAME_CONVERTED = {
     "United States": "United States of America", "Vatican City": "Holy See", "Vatican": "Holy See", "Venezuela":
     "Venezuela, Bolivarian Republic of", "Virgin Islands, British": "British Virgin Islands"}
 
+#alias lookup keyed on the same .title() normalisation applied to user input, so aliases like
+#"UAE", "USA" and "DR Congo" (which are not title-case) are still reachable
+NAME_CONVERTED_LOOKUP = {alias.title(): official for alias, official in NAME_CONVERTED.items()}
+
+#max outbound requests per IP per window for endpoints that proxy a third party API
+COORDS_RATE_LIMIT = int(os.environ.get("COORDS_RATE_LIMIT", "30"))
+COORDS_RATE_WINDOW = 60.0
+
+#/api/all serves the entire dataset (~2.5MB) in one response, so cap how often a single caller can
+#pull it. deliberately generous - this bounds abuse rather than throttling normal use
+ALL_RATE_LIMIT = int(os.environ.get("ALL_RATE_LIMIT", "300"))
+ALL_RATE_WINDOW = 60.0
+
+#seconds a reverse geocode result is reused before being fetched again, so cached coordinates do
+#not stay pinned to a stale answer for the lifetime of a warm instance
+REVERSE_GEOCODE_TTL = float(os.environ.get("REVERSE_GEOCODE_TTL", "86400"))
+
+#ponytail: per-instance rate limit — only bounds a single warm Vercel instance, not the whole
+#deployment. Move to Vercel KV/Redis if a global limit is ever needed.
+_rate_limit_hits: dict[str, list[float]] = {}
+
+def rate_limited(key: str, limit: int, window: float) -> bool:
+    """ Return True if the given key has exceeded limit requests within the trailing window (seconds). """
+    now = time.monotonic()
+    hits = [t for t in _rate_limit_hits.get(key, []) if now - t < window]
+    #evict only keys whose window has fully expired, so the dict cannot grow without bound on a
+    #long lived instance. clearing the whole dict here would reset the counters of callers that
+    #are currently being limited, letting a burst of unique keys wipe the limiter on demand.
+    #ponytail: bounded by the number of distinct callers active within one window, which is the
+    #real working set - swap in an LRU if that ever stops being small.
+    if len(_rate_limit_hits) > 10000:
+        for expired in [k for k, v in _rate_limit_hits.items() if not v or now - v[-1] >= window]:
+            del _rate_limit_hits[expired]
+    if len(hits) >= limit:
+        _rate_limit_hits[key] = hits
+        return True
+    hits.append(now)
+    _rate_limit_hits[key] = hits
+    return False
+
+def client_ip() -> str:
+    """
+    Best effort client IP, accounting for the Vercel proxy sitting in front of the app.
+
+    X-Forwarded-For is appended to by each proxy, so its *first* entry is whatever the caller sent
+    and can be set to anything - keying a rate limit on it lets a caller reset their own counter by
+    rotating the header. Vercel writes X-Vercel-Forwarded-For and X-Real-IP itself, so prefer those
+    and otherwise take the last X-Forwarded-For entry, which is the one our nearest proxy wrote.
+    """
+    for header in ('X-Vercel-Forwarded-For', 'X-Real-IP'):
+        value = (request.headers.get(header) or '').split(',')[0].strip()
+        if value:
+            return value
+    forwarded = [part.strip() for part in (request.headers.get('X-Forwarded-For') or '').split(',') if part.strip()]
+    if forwarded:
+        return forwarded[-1]
+    return request.remote_addr or 'unknown'
+
 @lru_cache()
 def get_subdivision_instance():
     """ Cache function for initialization of Subdivisions instance. """
@@ -142,12 +222,105 @@ def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     c = 2 * atan2(sqrt(a), sqrt(1 - a))
     return r * c
 
+def nearest_subdivision(lat: float, lng: float, country_code: str="") -> tuple[str, str]|None:
+    """
+    Find the subdivision whose latLng attribute is closest to the input coordinates, using the
+    local dataset only. Used as an offline fallback for /api/coords when the reverse geocoding
+    provider is unavailable or returns no usable ISO 3166-2 code.
+
+    Parameters
+    ==========
+    :lat: float
+        latitude coordinate.
+    :lng: float
+        longitude coordinate.
+    :country_code: str (default="")
+        optional ISO 3166-1 alpha-2 code to restrict the search to a single country.
+
+    Returns
+    =======
+    :(country_code, subdivision_code)/None: tuple[str, str]|None
+        the closest subdivision, or None if the dataset has no usable coordinates.
+    """
+    all_iso3166_2 = get_all_subdivisions()
+    search_space = {country_code: all_iso3166_2[country_code]} if country_code in all_iso3166_2 else all_iso3166_2
+
+    closest = None
+    closest_distance = float('inf')
+    #ponytail: linear scan over ~5k subdivisions, measured at ~2ms. A spatial index is only
+    #worth it if the dataset grows by orders of magnitude.
+    for cc, subdivisions in search_space.items():
+        for subdivision_code, subdivision_data in subdivisions.items():
+            latlng = subdivision_data.get('latLng')
+            if not latlng or len(latlng) != 2:
+                continue
+            distance = haversine_km(lat, lng, latlng[0], latlng[1])
+            if distance < closest_distance:
+                closest_distance = distance
+                closest = (cc, subdivision_code)
+    return closest
+
+@lru_cache(maxsize=2048)
+def _reverse_geocode_cached(lat: float, lng: float, ttl_bucket: int) -> dict:
+    """
+    Reverse geocode a coordinate pair via the OpenStreetMap Nominatim API. Cached because
+    Nominatim's usage policy caps callers at roughly 1 request/second — without this an
+    unauthenticated caller could get the deployment IP banned.
+
+    Coordinates are expected to be rounded by the caller so nearby lookups share a cache entry.
+    Raises requests.RequestException on a transport error and ValueError on a non-JSON reply;
+    neither is cached by lru_cache, so failures are retried on the next request.
+
+    Parameters
+    ==========
+    :lat: float
+        latitude coordinate.
+    :lng: float
+        longitude coordinate.
+    :ttl_bucket: int
+        current REVERSE_GEOCODE_TTL time bucket, part of the cache key only. lru_cache has no
+        expiry of its own, so rolling this value is what retires stale entries.
+
+    Returns
+    =======
+    :dict
+        the decoded Nominatim response.
+    """
+    nominatim_url = f"https://nominatim.openstreetmap.org/reverse?format=json&lat={lat}&lon={lng}&zoom=10&addressdetails=1"
+    headers = {"User-Agent": "iso3166-2-api/1.0 (https://github.com/amckenna41/iso3166-2-api)"}
+    osm_response = requests.get(nominatim_url, headers=headers, timeout=10)
+    osm_response.raise_for_status()
+    return osm_response.json()
+
+def reverse_geocode(lat: float, lng: float) -> dict:
+    """ Reverse geocode a coordinate pair, reusing a cached result for up to REVERSE_GEOCODE_TTL seconds. """
+    return _reverse_geocode_cached(lat, lng, int(time.monotonic() // REVERSE_GEOCODE_TTL))
+
 @app.after_request
 def add_cache_control(response):
-    #add public Cache-Control for successful GET responses returning JSON data
-    if request.method == 'GET' and response.status_code == 200 and 'application/json' in response.content_type:
+    #public read-only API, so allow any origin to call it from the browser
+    response.headers['Access-Control-Allow-Origin'] = '*'
+    response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
+    response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+    response.headers['Access-Control-Max-Age'] = '86400'
+
+    #/random must never be cached - a stored response pins every caller to the same "random"
+    #subdivision until it expires, which is what the CDN in front of the API was doing
+    if request.path.rstrip('/').endswith('/random'):
+        response.cache_control.no_store = True
+        return response
+
+    #add public Cache-Control and an ETag for successful GET data responses, so repeat callers
+    #get a 304 instead of re-downloading the payload. direct_passthrough responses (static
+    #files) are skipped as their body is not available to hash here.
+    cacheable_types = ('application/json', 'application/geo+json', 'text/csv')
+    if (request.method == 'GET' and response.status_code == 200
+            and any(t in response.content_type for t in cacheable_types)
+            and not response.direct_passthrough):
         response.cache_control.public = True
         response.cache_control.max_age = 3600
+        response.add_etag()
+        response = response.make_conditional(request)
     return response
 
 @app.route('/')
@@ -189,6 +362,10 @@ def all() -> tuple[dict, int]:
         response status code. 200 is a successful response, 400 means there was an 
         invalid parameter input. 
     """  
+    #this endpoint returns the whole dataset, so cap how often one caller can pull it
+    if rate_limited(f"all:{client_ip()}", ALL_RATE_LIMIT, ALL_RATE_WINDOW):
+        return jsonify(create_error_message(f"Rate limit exceeded. A maximum of {ALL_RATE_LIMIT} requests per minute are allowed on this endpoint.", request.url, 429)), 429
+
     #parse filter query string param
     filter_param = request.args.get('filter')
 
@@ -218,25 +395,16 @@ def all() -> tuple[dict, int]:
         all_iso3166_2_ = dict(list(all_iso3166_2_.items())[:limit_param])
 
     #parse lang query string param and filter localOtherName to the requested language
-    lang_param = request.args.get('lang')
-    if lang_param:
-        lang_param = lang_param.strip()
-        if not re.match(r'^[a-zA-Z0-9]{2,10}$', lang_param):
-            return jsonify(create_error_message("lang query string parameter must be an ISO 639 language code (2–10 alphanumeric characters).", request.url)), 400
-        all_iso3166_2_ = filter_lang_local_name(all_iso3166_2_, lang_param)
+    all_iso3166_2_, lang_error = apply_lang(all_iso3166_2_)
+    if lang_error:
+        return jsonify(create_error_message(lang_error, request.url)), 400
 
-    #parse format query string param
-    format_param = request.args.get('format', 'json').lower().strip()
-    if format_param not in ('json', 'csv', 'geojson'):
-        return jsonify(create_error_message(f"Unsupported format '{format_param}'. Supported formats: json, csv, geojson.", request.url)), 400
-
-    #return non-JSON format if requested (bypasses pagination)
-    if format_param != 'json':
-        return make_format_response(all_iso3166_2_, format_param)
-
-    #parse pagination params — only active when page or pageSize is explicitly provided
+    #parse pagination params — only active when page or pageSize is explicitly provided.
+    #applied before the format conversion below so that csv/geojson return the requested page
+    #rather than silently ignoring it and serialising the whole dataset
     page_param = request.args.get('page')
     page_size_param = request.args.get('pageSize')
+    pagination = None
     if page_param is not None or page_size_param is not None:
         try:
             page = int(page_param or 1)
@@ -251,14 +419,24 @@ def all() -> tuple[dict, int]:
         total_countries = len(all_keys)
         total_pages = ceil(total_countries / page_size)
         start = (page - 1) * page_size
-        page_data = {k: all_iso3166_2_[k] for k in all_keys[start:start + page_size]}
-        return jsonify({
-            "data": page_data,
-            "page": page,
-            "pageSize": page_size,
-            "totalPages": total_pages,
-            "totalCountries": total_countries
-        }), 200
+        all_iso3166_2_ = {k: all_iso3166_2_[k] for k in all_keys[start:start + page_size]}
+        pagination = {"page": page, "pageSize": page_size, "totalPages": total_pages, "totalCountries": total_countries}
+
+    #return non-JSON format if requested. csv and geojson are flat records with no envelope to put
+    #the pagination metadata in, so it is exposed in headers instead
+    formatted, format_error = apply_format(all_iso3166_2_)
+    if format_error:
+        return jsonify(create_error_message(format_error, request.url)), 400
+    if formatted is not None:
+        if pagination:
+            formatted.headers['X-Page'] = str(pagination["page"])
+            formatted.headers['X-Page-Size'] = str(pagination["pageSize"])
+            formatted.headers['X-Total-Pages'] = str(pagination["totalPages"])
+            formatted.headers['X-Total-Countries'] = str(pagination["totalCountries"])
+        return formatted
+
+    if pagination:
+        return jsonify({"data": all_iso3166_2_, **pagination}), 200
 
     return jsonify(all_iso3166_2_), 200
 
@@ -300,10 +478,7 @@ def api_alpha(input_alpha: str="") -> tuple[dict, int]:
     try:
         iso3166_2 = get_subdivision_instance()[input_alpha]
     except ValueError as ve:
-        error_msg = str(ve)
-        if '. Did you mean' in error_msg:
-            error_msg = error_msg[:error_msg.index('. Did you mean')] + '.'
-        return jsonify(create_error_message(error_msg, request.url)), 400
+        return jsonify(create_error_message(str(ve), request.url)), 400
 
     #parse filter query string param
     filter_param = request.args.get('filter')
@@ -325,21 +500,16 @@ def api_alpha(input_alpha: str="") -> tuple[dict, int]:
         iso3166_2_nested = dict(iso3166_2)
 
     #parse lang query string param and filter localOtherName to the requested language
-    lang_param = request.args.get('lang')
-    if lang_param:
-        lang_param = lang_param.strip()
-        if not re.match(r'^[a-zA-Z0-9]{2,10}$', lang_param):
-            return jsonify(create_error_message("lang query string parameter must be an ISO 639 language code (2–10 alphanumeric characters).", request.url)), 400
-        if not (pycountry_languages.get(alpha_3=lang_param.lower()) or pycountry_languages.get(alpha_2=lang_param.lower())):
-            return jsonify(create_error_message(f"Unrecognized ISO 639 language code: {lang_param}.", request.url)), 400
-        iso3166_2_nested = filter_lang_local_name(iso3166_2_nested, lang_param)
+    iso3166_2_nested, lang_error = apply_lang(iso3166_2_nested)
+    if lang_error:
+        return jsonify(create_error_message(lang_error, request.url)), 400
 
     #parse format query string param
-    format_param = request.args.get('format', 'json').lower().strip()
-    if format_param not in ('json', 'csv', 'geojson'):
-        return jsonify(create_error_message(f"Unsupported format '{format_param}'. Supported formats: json, csv, geojson.", request.url)), 400
-    if format_param != 'json':
-        return make_format_response(iso3166_2_nested, format_param)
+    formatted, format_error = apply_format(iso3166_2_nested)
+    if format_error:
+        return jsonify(create_error_message(format_error, request.url)), 400
+    if formatted is not None:
+        return formatted
 
     #unwrap back to flat format for single-country JSON responses
     if is_flat:
@@ -381,8 +551,9 @@ def api_subdivision(input_subdivision="") -> tuple[dict, int]:
     if (input_subdivision == ""):
         return jsonify(create_error_message("The Subdivision input parameter cannot be empty. Please pass in at least one subdivision code.", request.url)), 400    
             
-    #sort and uppercase all subdivision codes, remove any unicode spaces (%20)
-    subdivision_code = sorted([input_subdivision.upper().replace(' ','').replace('%20', '')])
+    #uppercase the input and strip whitespace. flask has already percent-decoded the path segment,
+    #so an encoded space arrives as a real space and needs no second decode
+    subdivision_code = [input_subdivision.upper().replace(' ', '')]
     
     #if first element in subdivision list is comma separated list of codes, split into actual array of comma separated codes
     if (',' in subdivision_code[0]):
@@ -413,19 +584,16 @@ def api_subdivision(input_subdivision="") -> tuple[dict, int]:
             return jsonify(create_error_message(f'Invalid attribute name input to filter query string parameter: {filter_param}. Refer to the list of supported attributes: {", ".join(all_attributes)}.', request.url)), 400
 
     #parse lang query string param and filter localOtherName to the requested language
-    lang_param = request.args.get('lang')
-    if lang_param:
-        lang_param = lang_param.strip()
-        if not re.match(r'^[a-zA-Z0-9]{2,10}$', lang_param):
-            return jsonify(create_error_message("lang query string parameter must be an ISO 639 language code (2–10 alphanumeric characters).", request.url)), 400
-        iso3166_2 = filter_lang_local_name(iso3166_2, lang_param)
+    iso3166_2, lang_error = apply_lang(iso3166_2)
+    if lang_error:
+        return jsonify(create_error_message(lang_error, request.url)), 400
 
     #parse format query string param
-    format_param = request.args.get('format', 'json').lower().strip()
-    if format_param not in ('json', 'csv', 'geojson'):
-        return jsonify(create_error_message(f"Unsupported format '{format_param}'. Supported formats: json, csv, geojson.", request.url)), 400
-    if format_param != 'json':
-        return make_format_response(iso3166_2, format_param)
+    formatted, format_error = apply_format(iso3166_2)
+    if format_error:
+        return jsonify(create_error_message(format_error, request.url)), 400
+    if formatted is not None:
+        return formatted
 
     return jsonify(iso3166_2), 200
 
@@ -444,10 +612,9 @@ def api_search(input_search_term: str="") -> tuple[dict, int]:
     subdivision parameters have to be to the input search terms, decreasing the likeness will increase
     the search space. If no matching subdivision name found or input is empty then return an error. 
 
-    By default, the Match Score attribute will be returned but not included for each search results, 
-    which represents the % match that the search results are to the input search terms. If you want 
-    to include this attribute from the search results then set the query string parameter 
-    excludeMatchScore to 0.
+    By default the matchScore attribute, which represents the % match that each search result is to
+    the input search terms, is excluded from the results. To include it, set the query string
+    parameter excludeMatchScore to 0.
 
     Parameters
     ==========
@@ -466,8 +633,9 @@ def api_search(input_search_term: str="") -> tuple[dict, int]:
     if (input_search_term == ""):
         return jsonify(create_error_message("The search input parameter cannot be empty. Please pass in at least one search term.", request.url)), 400 
     
-    #remove all whitespace & unicode characters
-    search_terms = unquote(input_search_term).replace("%20", ' ')
+    #flask has already percent-decoded the path segment, so decoding again here would let a caller
+    #smuggle a second layer of encoding through (%2541 arriving as 'A' rather than '%41')
+    search_terms = input_search_term
     
     #parse likeness query string param, used as a % cutoff for likeness of subdivision names, raise error if invalid type or value input
     try:
@@ -489,10 +657,20 @@ def api_search(input_search_term: str="") -> tuple[dict, int]:
     if not search_results:
         return jsonify({"Message": f"No matching subdivision data found with the given search term(s): {search_terms}. Try using the query string parameter '?likeness' and reduce the likeness score to expand the search space, '?likeness=30' will return subdivision data that have a 30% match to the input name. The current likeness score is set to {search_likeness_score}."}), 200
 
+    #the package's search() adds a 'code' attribute that just repeats the subdivision code the result is
+    #already keyed by (or its subdivisionCode when the match score is included). drop it so /search returns
+    #the same attribute set as every other endpoint - search() returns copies so this cannot affect the cached data
+    if isinstance(search_results, list):
+        subdivision_objects = search_results
+    else:
+        subdivision_objects = [subdivision for country in search_results.values() for subdivision in country.values()]
+    for subdivision in subdivision_objects:
+        subdivision.pop('code', None)
+
     #parse filter query string param
     filter_param = request.args.get('filter')
 
-    #filter out attributes from filter query parameter, if applicable 
+    #filter out attributes from filter query parameter, if applicable
     if not (filter_param is None):
         filtered_subdivisions = filter_attributes(filter_param, search_results, exclude_match_score)
         if (filtered_subdivisions == -1):
@@ -501,21 +679,36 @@ def api_search(input_search_term: str="") -> tuple[dict, int]:
         #set filtered attributes object to that of the returned search results
         search_results = filtered_subdivisions
 
-    #parse lang query string param — only applies when results are in nested dict format (excludeMatchScore=True)
-    lang_param = request.args.get('lang')
-    if lang_param and isinstance(search_results, dict):
-        lang_param = lang_param.strip()
-        if not re.match(r'^[a-zA-Z0-9]{2,10}$', lang_param):
-            return jsonify(create_error_message("lang query string parameter must be an ISO 639 language code (2–10 alphanumeric characters).", request.url)), 400
-        search_results = filter_lang_local_name(search_results, lang_param)
+    #when the match score is included the package returns a flat list of subdivision objects rather
+    #than the nested {country: {subdiv: data}} dict. nest it so lang/format apply either way, then
+    #flatten back afterwards for the JSON response.
+    results_are_list = isinstance(search_results, list)
+    if results_are_list:
+        nested_results = {}
+        for result in search_results:
+            nested_results.setdefault(result.get('countryCode'), {})[result.get('subdivisionCode')] = result
+    else:
+        nested_results = search_results
 
-    #parse format query string param — only applies for nested dict format
-    if isinstance(search_results, dict):
-        format_param = request.args.get('format', 'json').lower().strip()
-        if format_param not in ('json', 'csv', 'geojson'):
-            return jsonify(create_error_message(f"Unsupported format '{format_param}'. Supported formats: json, csv, geojson.", request.url)), 400
-        if format_param != 'json':
-            return make_format_response(search_results, format_param)
+    #parse lang query string param and filter localOtherName to the requested language
+    nested_results, lang_error = apply_lang(nested_results)
+    if lang_error:
+        return jsonify(create_error_message(lang_error, request.url)), 400
+
+    #parse format query string param
+    formatted, format_error = apply_format(nested_results)
+    if format_error:
+        return jsonify(create_error_message(format_error, request.url)), 400
+    if formatted is not None:
+        return formatted
+
+    #restore the original flat list shape for the JSON response, walking the original list so the
+    #match score ordering returned by the package is preserved rather than regrouped by country
+    if results_are_list:
+        search_results = [nested_results[result.get('countryCode')][result.get('subdivisionCode')]
+                          for result in search_results]
+    else:
+        search_results = nested_results
 
     return jsonify(search_results), 200
 
@@ -560,8 +753,8 @@ def api_search_geo(input_latlng: str="") -> tuple[dict, int]:
     if (radius_km <= 0):
         return jsonify(create_error_message("Radius query string parameter must be greater than 0.", request.url)), 400
 
-    #remove whitespace/unicode and split into lat/lng
-    latlng_parts = unquote(input_latlng).replace('%20', '').split(',')
+    #flask has already percent-decoded the path segment, so only whitespace needs stripping here
+    latlng_parts = input_latlng.replace(' ', '').split(',')
     if len(latlng_parts) != 2:
         return jsonify(create_error_message("Input latlng must be a comma separated string of latitude and longitude, e.g. '39.4178,-2.6232'.", request.url)), 400
 
@@ -607,6 +800,18 @@ def api_search_geo(input_latlng: str="") -> tuple[dict, int]:
 
         matched_subdivisions = filtered_subdivisions
 
+    #parse lang query string param and filter localOtherName to the requested language
+    matched_subdivisions, lang_error = apply_lang(matched_subdivisions)
+    if lang_error:
+        return jsonify(create_error_message(lang_error, request.url)), 400
+
+    #parse format query string param
+    formatted, format_error = apply_format(matched_subdivisions)
+    if format_error:
+        return jsonify(create_error_message(format_error, request.url)), 400
+    if formatted is not None:
+        return formatted
+
     return jsonify(matched_subdivisions), 200
 
 @app.route('/api/country_name/<input_country_name>', methods=['GET'])
@@ -639,8 +844,10 @@ def api_country_name(input_country_name="") -> tuple[dict, int]:
     alpha2_code = []
     names = []
 
-    #decode any unicode or accent characters using utf-8 encoding, lower case and remove additional whitespace
-    name = unidecode(unquote_plus(input_country_name)).replace('%20', ' ').title()
+    #decode any unicode or accent characters, title case for the alias lookup below. flask has
+    #already percent-decoded the path segment, so only '+' still needs translating to a space -
+    #decoding again here would let a caller smuggle a second layer of encoding through
+    name = unidecode(input_country_name.replace('+', ' ')).title()
 
     #if no input parameters set then return error message
     if (name == ""):
@@ -652,10 +859,11 @@ def api_country_name(input_country_name="") -> tuple[dict, int]:
     else:
         names = sorted(name.split(','))
 
-    #convert country names using module-level alias map, if applicable
+    #convert country names using module-level alias map, if applicable. the lookup is keyed on the
+    #same .title() normalisation applied to the input above, so non title-case aliases still match
     for name_ in range(0, len(names)):
-        if names[name_].title() in NAME_CONVERTED:
-            names[name_] = NAME_CONVERTED[names[name_].title()]
+        if names[name_].title() in NAME_CONVERTED_LOOKUP:
+            names[name_] = NAME_CONVERTED_LOOKUP[names[name_].title()]
 
     #remove all whitespace in any of the country names
     names = [name_.strip(' ') for name_ in names]
@@ -703,19 +911,16 @@ def api_country_name(input_country_name="") -> tuple[dict, int]:
             return jsonify(create_error_message(f'Invalid attribute name input to filter query string parameter: {filter_param}. Refer to the list of supported attributes: {", ".join(all_attributes)}.', request.url)), 400             
 
     #parse lang query string param and filter localOtherName to the requested language
-    lang_param = request.args.get('lang')
-    if lang_param:
-        lang_param = lang_param.strip()
-        if not re.match(r'^[a-zA-Z0-9]{2,10}$', lang_param):
-            return jsonify(create_error_message("lang query string parameter must be an ISO 639 language code (2–10 alphanumeric characters).", request.url)), 400
-        iso3166_2 = filter_lang_local_name(iso3166_2, lang_param)
+    iso3166_2, lang_error = apply_lang(iso3166_2)
+    if lang_error:
+        return jsonify(create_error_message(lang_error, request.url)), 400
 
     #parse format query string param
-    format_param = request.args.get('format', 'json').lower().strip()
-    if format_param not in ('json', 'csv', 'geojson'):
-        return jsonify(create_error_message(f"Unsupported format '{format_param}'. Supported formats: json, csv, geojson.", request.url)), 400
-    if format_param != 'json':
-        return make_format_response(iso3166_2, format_param)
+    formatted, format_error = apply_format(iso3166_2)
+    if format_error:
+        return jsonify(create_error_message(format_error, request.url)), 400
+    if formatted is not None:
+        return formatted
 
     return jsonify(iso3166_2), 200
 
@@ -758,7 +963,24 @@ def api_list_subdivisions(input_alpha: str="") -> tuple[dict, int]:
         try:
             iso3166_2 = get_subdivision_instance().subdivision_codes(input_alpha)
         except ValueError as ve:
-            return jsonify(create_error_message(str(ve), request.url)), 400   
+            return jsonify(create_error_message(str(ve), request.url)), 400
+
+    #parse format query string param. this endpoint returns codes only, so csv is the only
+    #alternative that makes sense — geojson needs coordinates and filter/lang need attributes
+    format_param = request.args.get('format', 'json').lower().strip()
+    if format_param not in ('json', 'csv'):
+        return jsonify(create_error_message(f"Unsupported format '{format_param}' for this endpoint. Supported formats: json, csv.", request.url)), 400
+    if format_param == 'csv':
+        #a single country lookup returns a flat list of codes, multiple returns {country: [codes]}
+        codes_by_country = iso3166_2 if isinstance(iso3166_2, dict) else {input_alpha.upper(): iso3166_2}
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(['countryCode', 'subdivisionCode'])
+        for country_code, subdivision_codes in codes_by_country.items():
+            for subdivision_code in subdivision_codes:
+                writer.writerow([csv_safe(country_code), csv_safe(subdivision_code)])
+        return Response(output.getvalue(), status=200, mimetype='text/csv',
+                        headers={'Content-Disposition': 'attachment; filename="iso3166-2-codes.csv"'})
 
     return jsonify(iso3166_2), 200
 
@@ -817,26 +1039,42 @@ def filter_attributes(filter_list: str, filtered_iso3166_2: dict, exclude_match_
 
     #temp var for editing list
     temp_filter = filter_list
-    
+
     #iterate over each attribute in filtered list, return error if invalid attribute input
     for attr in filter_list:
         #return all attributes if wildcard symbol input
         if (attr == "*"):
-            temp_filter = all_attributes
-            break 
+            #copy, never alias, the module level list — it is extended below and would otherwise
+            #be mutated globally and leak across requests on a warm instance
+            temp_filter = list(all_attributes)
+            break
         if (not attr in all_attributes and attr != ''):
             return -1
-    
-    filter_list = temp_filter
 
-    #recursive function that recursively removes any unwanted attributes per subdivision object
+    filter_list = list(temp_filter)
+
+    #recursively remove any unwanted attributes per subdivision object. the input is either the
+    #nested {country: {subdivision: {attribute: value}}} object or, when the match score is
+    #included, a flat list of subdivision objects
     def filter_dict(d, attributes_to_keep):
-        if isinstance(d, dict):
-            return {k: filter_dict(v, attributes_to_keep) for k, v in d.items() if k in attributes_to_keep or isinstance(v, dict)}
-        elif isinstance(d, list):
+        #a list here is a container of subdivision objects - attribute values are returned whole
+        #below and never recursed into, so a list attribute like history cannot reach this branch
+        if isinstance(d, list):
             return [filter_dict(i, attributes_to_keep) for i in d]
-        else:
+        if not isinstance(d, dict):
             return d
+        filtered = {}
+        for k, v in d.items():
+            if k in attributes_to_keep:
+                #return a kept attribute whole. recursing into it would filter the keys of nested
+                #values such as the history entries, which are data rather than attributes, and
+                #would empty them out - history became [{}] for every filter including '*'
+                filtered[k] = v
+            elif isinstance(v, dict):
+                #a dict value that is not itself an attribute is a container level (country code
+                #or subdivision code), so descend through it to reach the attributes underneath
+                filtered[k] = filter_dict(v, attributes_to_keep)
+        return filtered
     
     #if the Match score and its attributes are to be included in output, add them to filter list
     if not (exclude_match_score):
@@ -851,7 +1089,58 @@ def filter_attributes(filter_list: str, filtered_iso3166_2: dict, exclude_match_
 
 def create_error_message(message: str, path: str, status: int = 400) -> dict:
     """ Helper function that returns error message when one occurs in Flask app. """
+    #the iso3166-2 package appends a ". Did you mean: X, Y, Z?" suggestion to its ValueErrors, cut it
+    #here rather than per-endpoint so every endpoint reports invalid codes identically
+    if '. Did you mean' in message:
+        message = message[:message.index('. Did you mean')] + '.'
     return {"message": message, "path": path, "status": status}
+
+def apply_lang(data: dict) -> tuple[dict, str|None]:
+    """
+    Parse the 'lang' query string parameter, validate it is a real ISO 639 code and filter
+    the localOtherName attribute down to that language. Used by every data endpoint so the
+    validation cannot drift between them.
+
+    Parameters
+    ==========
+    :data: dict
+        nested {country_code: {subdiv_code: data}} object.
+
+    Returns
+    =======
+    :(data, error): tuple[dict, str|None]
+        the filtered data and an error message, or None if the parameter was valid/absent.
+    """
+    lang = (request.args.get('lang') or '').strip()
+    if not lang:
+        return data, None
+    if not re.match(r'^[a-zA-Z0-9]{2,10}$', lang):
+        return data, "lang query string parameter must be an ISO 639 language code (2–10 alphanumeric characters)."
+    if not (pycountry_languages.get(alpha_3=lang.lower()) or pycountry_languages.get(alpha_2=lang.lower())):
+        return data, f"Unrecognized ISO 639 language code: {lang}."
+    return filter_lang_local_name(data, lang), None
+
+def apply_format(data: dict) -> tuple[Response|None, str|None]:
+    """
+    Parse the 'format' query string parameter and build the non-JSON response if one was asked for.
+
+    Parameters
+    ==========
+    :data: dict
+        nested {country_code: {subdiv_code: data}} object.
+
+    Returns
+    =======
+    :(response, error): tuple[Response|None, str|None]
+        the CSV/GeoJSON response, or None for the default JSON output, plus an error message
+        if an unsupported format was requested.
+    """
+    format_param = request.args.get('format', 'json').lower().strip()
+    if format_param not in ('json', 'csv', 'geojson'):
+        return None, f"Unsupported format '{format_param}'. Supported formats: json, csv, geojson."
+    if format_param == 'json':
+        return None, None
+    return make_format_response(data, format_param), None
 
 def filter_lang_local_name(data: dict, lang: str) -> dict:
     """
@@ -890,6 +1179,19 @@ def filter_lang_local_name(data: dict, lang: str) -> dict:
                 new_data['localOtherName'] = ', '.join(m.strip().strip("'") for m in matches) if matches else None
             result[country_code][subdiv_code] = new_data
     return result
+
+def csv_safe(value) -> str:
+    """
+    Neutralise spreadsheet formula injection in a CSV cell.
+
+    A cell starting with =, +, - or @ is evaluated as a formula when the file is opened in Excel,
+    LibreOffice or Sheets. No ISO 3166-2 name currently starts with one, but the values come from
+    an upstream dataset, so prefix any that do with a quote rather than relying on that staying true.
+    """
+    text = '' if value is None else str(value)
+    if text[:1] in ('=', '+', '-', '@', '\t', '\r'):
+        return "'" + text
+    return text
 
 def make_format_response(data: dict, format_param: str) -> Response:
     """
@@ -940,14 +1242,14 @@ def make_format_response(data: dict, format_param: str) -> Response:
         for country_code, subdivisions in data.items():
             for subdiv_code, subdiv_data in subdivisions.items():
                 row = {
-                    'subdivisionCode': subdiv_code,
-                    'countryCode': country_code,
-                    'name': subdiv_data.get('name') or '',
-                    'localOtherName': subdiv_data.get('localOtherName') or '',
-                    'type': subdiv_data.get('type') or '',
-                    'parentCode': subdiv_data.get('parentCode') or '',
+                    'subdivisionCode': csv_safe(subdiv_code),
+                    'countryCode': csv_safe(country_code),
+                    'name': csv_safe(subdiv_data.get('name')),
+                    'localOtherName': csv_safe(subdiv_data.get('localOtherName')),
+                    'type': csv_safe(subdiv_data.get('type')),
+                    'parentCode': csv_safe(subdiv_data.get('parentCode')),
                     'latLng': str(subdiv_data.get('latLng')) if subdiv_data.get('latLng') else '',
-                    'flag': subdiv_data.get('flag') or '',
+                    'flag': csv_safe(subdiv_data.get('flag')),
                     'history': json.dumps(subdiv_data.get('history')) if subdiv_data.get('history') else ''
                 }
                 writer.writerow(row)
@@ -958,23 +1260,33 @@ def make_format_response(data: dict, format_param: str) -> Response:
             headers={'Content-Disposition': 'attachment; filename="iso3166-2.csv"'}
         )
 
-@app.route('/clear-cache')
-@app.route('/api/clear-cache')
+@app.route('/clear-cache', methods=['POST'])
+@app.route('/api/clear-cache', methods=['POST'])
 def clear_cache():
-    """ Clear cache of Subdivisions class instance and all cached subdivision data. Requires valid CACHE_CLEAR_TOKEN. """
-    token = request.args.get('token', '')
-    if not CACHE_CLEAR_TOKEN or token != CACHE_CLEAR_TOKEN:
-        return jsonify(create_error_message("Unauthorized. A valid token query parameter is required.", request.url, 401)), 401
+    """
+    Clear cache of Subdivisions class instance and all cached subdivision data. Requires the
+    CACHE_CLEAR_TOKEN value in the X-Cache-Clear-Token header. POST + header rather than
+    GET + query string so the token does not end up in access logs or browser history.
+    """
+    token = request.headers.get('X-Cache-Clear-Token', '')
+    #constant time comparison so the token cannot be recovered by timing the response
+    if not CACHE_CLEAR_TOKEN or not hmac.compare_digest(token, CACHE_CLEAR_TOKEN):
+        return jsonify(create_error_message("Unauthorized. A valid X-Cache-Clear-Token header is required.", request.url, 401)), 401
     get_subdivision_instance.cache_clear()
     get_all_subdivisions.cache_clear()
     get_all_subdivision_codes.cache_clear()
-    return 'Cache cleared'
+    _reverse_geocode_cached.cache_clear()
+    return jsonify({"message": "Cache cleared"}), 200
 
 @app.route('/version')
 @app.route('/api/version')
-def get_version():
-    """ Get the current version of the iso3166-2 being used by the API. Mainly used for dev. """
-    return get_subdivision_instance().__version__
+def get_version() -> tuple[dict, int]:
+    """
+    Get the current version of the iso3166-2 package being used by the API. Mainly used for dev.
+    Returns a JSON object rather than a bare string so callers do not have to special case this
+    endpoint against every other one.
+    """
+    return jsonify({"version": get_subdivision_instance().__version__}), 200
 
 @app.route('/api/stats', methods=['GET'])
 @app.route('/stats', methods=['GET'])
@@ -1088,14 +1400,15 @@ def api_subdivision_post() -> tuple[dict, int]:
                 f'Refer to the list of supported attributes: {", ".join(all_attributes)}.',
                 request.url)), 400
 
-    lang_param = request.args.get('lang')
-    if lang_param:
-        lang_param = lang_param.strip()
-        if not re.match(r'^[a-zA-Z0-9]{2,10}$', lang_param):
-            return jsonify(create_error_message(
-                "lang query string parameter must be an ISO 639 language code (2–10 alphanumeric characters).",
-                request.url)), 400
-        iso3166_2 = filter_lang_local_name(iso3166_2, lang_param)
+    iso3166_2, lang_error = apply_lang(iso3166_2)
+    if lang_error:
+        return jsonify(create_error_message(lang_error, request.url)), 400
+
+    formatted, format_error = apply_format(iso3166_2)
+    if format_error:
+        return jsonify(create_error_message(format_error, request.url)), 400
+    if formatted is not None:
+        return formatted
 
     return jsonify(iso3166_2), 200
 
@@ -1158,83 +1471,62 @@ def api_coords() -> tuple[dict, int]:
     if not (-180 <= longitude <= 180):
         return jsonify(create_error_message(f"Longitude value {longitude} is out of range. Longitude must be between -180 and 180.", request.url)), 400
     
-    #call OpenStreetMap Nominatim API for reverse geocoding
-    nominatim_url = f"https://nominatim.openstreetmap.org/reverse?format=json&lat={latitude}&lon={longitude}&zoom=10&addressdetails=1"
-    
-    #set user agent header for OSM API (required by their usage policy)
-    headers = {
-        "User-Agent": "iso3166-2-api/1.0 (https://github.com/amckenna41/iso3166-2-api)"
-    }
-    
+    #rate limit per client, this endpoint proxies a third party API with its own usage policy
+    if rate_limited(f"coords:{client_ip()}", COORDS_RATE_LIMIT, COORDS_RATE_WINDOW):
+        return jsonify(create_error_message(f"Rate limit exceeded. A maximum of {COORDS_RATE_LIMIT} requests per minute are allowed on this endpoint.", request.url, 429)), 429
+
+    country_code = ""
+    iso3166_2_code = ""
+
+    #call OpenStreetMap Nominatim API for reverse geocoding. coordinates are rounded to ~100m so
+    #that nearby lookups share a cache entry, keeping us within Nominatim's usage policy
     try:
-        osm_response = requests.get(nominatim_url, headers=headers, timeout=10)
-        osm_response.raise_for_status()
-    except requests.exceptions.RequestException as e:
-        return jsonify(create_error_message(f"Error connecting to OpenStreetMap API: {str(e)}", request.url, 500)), 500
-    
-    osm_data = osm_response.json()
-    
-    #check if OSM returned an error or no results
-    if 'error' in osm_data:
-        return jsonify(create_error_message(f"No location found at coordinates lat={latitude}, lng={longitude}. The coordinates may be in an ocean or remote area.", request.url, 404)), 404
-    
-    #extract country code and subdivision code from OSM response
-    address = osm_data.get('address', {})
-    country_code = address.get('country_code', '').upper()
-    
-    if not country_code:
-        return jsonify(create_error_message(f"Could not determine country from coordinates lat={latitude}, lng={longitude}.", request.url, 404)), 404
-    
-    #check if country code is valid
-    if country_code not in get_alpha2_codes():
-        return jsonify(create_error_message(f"Invalid or unsupported country code {country_code} returned from coordinates.", request.url, 404)), 404
-    
-    #try to extract subdivision code from OSM response
-    #OSM uses ISO 3166-2 codes in some responses
-    iso3166_2_code = osm_data.get('address', {}).get('ISO3166-2-lvl4', '')
-    
-    #if ISO3166-2-lvl4 not available, try to construct from state/province
-    if not iso3166_2_code:
-        #try different administrative level keys that OSM might return
-        state_keys = ['state', 'province', 'region', 'county', 'state_district']
-        state_name = None
-        
-        for key in state_keys:
-            if key in address:
-                state_name = address[key]
-                break
-        
-        if not state_name:
-            return jsonify(create_error_message(f"Could not determine subdivision from coordinates lat={latitude}, lng={longitude}. The location may not have subdivision data available.", request.url, 404)), 404
-        
-        #search for the subdivision by name within the country
-        try:
-            all_country_subdivisions = get_subdivision_instance()[country_code]
-            
-            #search through subdivisions to find matching name
-            found_subdivision = None
-            for subd_code, subd_data in all_country_subdivisions.items():
-                if subd_data.get('name', '').lower() == state_name.lower():
-                    found_subdivision = subd_code
-                    break
-                #also check localOtherName if available
-                local_other_name = subd_data.get('localOtherName', '')
-                if local_other_name and state_name.lower() in local_other_name.lower():
-                    found_subdivision = subd_code
-                    break
-            
-            if not found_subdivision:
-                return jsonify(create_error_message(f"Could not find subdivision '{state_name}' in country {country_code}. The coordinates may be in an area without ISO 3166-2 subdivision data.", request.url, 404)), 404
-            
-            iso3166_2_code = found_subdivision
-            
-        except (ValueError, KeyError) as e:
-            return jsonify(create_error_message(f"Error retrieving subdivision data for country {country_code}: {str(e)}", request.url, 404)), 404
-    
-    #validate the subdivision code format
-    if not re.match(r"^[A-Z]{2}-[A-Z0-9]{1,3}$", iso3166_2_code):
-        return jsonify(create_error_message(f"Invalid subdivision code format returned: {iso3166_2_code}.", request.url, 404)), 404
-    
+        osm_data = reverse_geocode(round(latitude, 3), round(longitude, 3))
+    except (requests.exceptions.RequestException, ValueError):
+        #provider unreachable or returned a non-JSON body, fall through to the offline lookup below
+        osm_data = {}
+
+    #extract country code and subdivision code from OSM response, ignoring an explicit OSM error
+    if osm_data and 'error' not in osm_data:
+        address = osm_data.get('address', {})
+        osm_country_code = address.get('country_code', '').upper()
+
+        #only trust the country code if it is a real ISO 3166-1 alpha-2 code
+        if osm_country_code in get_alpha2_codes():
+            country_code = osm_country_code
+
+            #OSM returns the ISO 3166-2 code directly in some responses
+            iso3166_2_code = address.get('ISO3166-2-lvl4', '')
+
+            #if ISO3166-2-lvl4 not available, try to match the subdivision by its administrative name
+            if not iso3166_2_code:
+                state_keys = ['state', 'province', 'region', 'county', 'state_district']
+                state_name = next((address[key] for key in state_keys if key in address), None)
+
+                if state_name:
+                    for subd_code, subd_data in get_all_subdivisions().get(country_code, {}).items():
+                        if (subd_data.get('name') or '').lower() == state_name.lower():
+                            iso3166_2_code = subd_code
+                            break
+                        #also check localOtherName if available
+                        local_other_name = subd_data.get('localOtherName') or ''
+                        if local_other_name and state_name.lower() in local_other_name.lower():
+                            iso3166_2_code = subd_code
+                            break
+
+    #reject anything that is not a well formed subdivision code before using it as a lookup key
+    if iso3166_2_code and not re.match(r"^[A-Z]{2}-[A-Z0-9]{1,3}$", iso3166_2_code):
+        iso3166_2_code = ""
+
+    #offline fallback, find the geographically closest subdivision in the local dataset. this keeps
+    #the endpoint working when Nominatim is down, rate limiting us, or has no ISO code for the area
+    if not iso3166_2_code or iso3166_2_code not in get_all_subdivisions().get(country_code, {}):
+        nearest = nearest_subdivision(latitude, longitude, country_code)
+        if not nearest:
+            return jsonify(create_error_message(f"Could not determine a subdivision for coordinates lat={latitude}, lng={longitude}. The coordinates may be in an ocean or an area without ISO 3166-2 subdivision data.", request.url, 404)), 404
+        country_code, iso3166_2_code = nearest
+
+
     #get the subdivision data
     try:
         all_iso3166_2 = get_all_subdivisions()
@@ -1260,11 +1552,26 @@ def api_coords() -> tuple[dict, int]:
             iso3166_2 = filter_attributes(filter_param, iso3166_2)
             if (iso3166_2 == -1):
                 return jsonify(create_error_message(f'Invalid attribute name input to filter query string parameter: {filter_param}. Refer to the list of supported attributes: {", ".join(all_attributes)}.', request.url)), 400
-        
+
+        #parse lang query string param and filter localOtherName to the requested language
+        iso3166_2, lang_error = apply_lang(iso3166_2)
+        if lang_error:
+            return jsonify(create_error_message(lang_error, request.url)), 400
+
+        #parse format query string param
+        formatted, format_error = apply_format(iso3166_2)
+        if format_error:
+            return jsonify(create_error_message(format_error, request.url)), 400
+        if formatted is not None:
+            return formatted
+
         return jsonify(iso3166_2), 200
-        
-    except Exception as e:
-        return jsonify(create_error_message(f"Error retrieving subdivision data: {str(e)}", request.url, 500)), 500
+
+    except Exception:
+        #log the detail for us but do not put the exception text in the response, it can carry
+        #internal paths and state that a caller has no business seeing
+        app.logger.exception("Unhandled error retrieving subdivision data for /coords")
+        return jsonify(create_error_message("Error retrieving subdivision data.", request.url, 500)), 500
 
 @app.route('/random')
 @app.route('/api/random')
@@ -1308,17 +1615,30 @@ def get_random() -> tuple[dict, int]:
     #parse filter query string param
     filter_param = request.args.get('filter')
     
-    #filter out attributes from filter query parameter, if applicable 
+    #filter out attributes from filter query parameter, if applicable
     if not (filter_param is None):
         iso3166_2 = filter_attributes(filter_param, iso3166_2)
         if (iso3166_2 == -1):
             return jsonify(create_error_message(f'Invalid attribute name input to filter query string parameter: {filter_param}. Refer to the list of supported attributes: {", ".join(all_attributes)}.', request.url)), 400
-    
+
+    #parse lang query string param and filter localOtherName to the requested language
+    iso3166_2, lang_error = apply_lang(iso3166_2)
+    if lang_error:
+        return jsonify(create_error_message(lang_error, request.url)), 400
+
+    #parse format query string param
+    formatted, format_error = apply_format(iso3166_2)
+    if format_error:
+        return jsonify(create_error_message(format_error, request.url)), 400
+    if formatted is not None:
+        return formatted
+
     return jsonify(iso3166_2), 200
 
 # def handler(environ, start_response):
 #     return app(environ, start_response)
 
 if __name__ == '__main__':
-    #run Flask app 
-    app.run(debug=True)
+    #run Flask app. debug is opt-in via FLASK_DEBUG=1 — it exposes the Werkzeug debugger, which
+    #allows arbitrary code execution, so it must never be on by default
+    app.run(debug=os.environ.get("FLASK_DEBUG", "").lower() in ("1", "true", "yes"))

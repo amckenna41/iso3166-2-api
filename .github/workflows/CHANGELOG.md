@@ -1,5 +1,58 @@
 # Change Log 
 
+## 1.8.4 - July/August 2026
+
+### Added
+
+- Added CORS support (`Access-Control-Allow-Origin: *`) to all responses, so the API can now be called directly from browser JavaScript on any origin without a proxy
+- Added `ETag` headers and `If-None-Match` revalidation to successful GET data responses, returning a 304 Not Modified instead of re-sending the payload (notable for `/api/all`, which is ~2.6MB)
+- Added response caching to the `/api/coords` reverse geocoding lookups, keyed on coordinates rounded to ~100m, to stay within the OpenStreetMap Nominatim usage policy
+- Added an offline fallback to `/api/coords` that returns the geographically closest subdivision from the local dataset when Nominatim is unavailable or has no ISO 3166-2 code for the location, so a valid coordinate always returns a result
+- Added rate limiting to `/api/coords` (30 requests per minute per IP, configurable via the `COORDS_RATE_LIMIT` environment variable), returning a 429 when exceeded
+- Added `?format` support to `/api/search_geo`, `POST /api/subdivision` and `/api/list_subdivisions` (json/csv only on the latter, as it returns codes rather than attributes)
+- Added `?lang` support to `/api/search_geo` and `POST /api/subdivision`
+- Added `?format` and `?lang` support to `/api/coords` and `/api/random`, the last two data endpoints that were silently ignoring both
+- Added rate limiting to `/api/all` (300 requests per minute per IP, configurable via the `ALL_RATE_LIMIT` environment variable), as it returns the entire ~2.6MB dataset in a single response. Deliberately generous, it is intended to bound abuse rather than throttle normal use
+- Added spreadsheet formula injection protection to the CSV output, prefixing any cell beginning with `=`, `+`, `-`, `@`, tab or carriage return with a quote so it is not evaluated when the file is opened in Excel, LibreOffice or Sheets
+- Added `X-Page`, `X-Page-Size`, `X-Total-Pages` and `X-Total-Countries` response headers to paginated `/api/all` responses in `csv` and `geojson` format, which have no envelope to carry the metadata
+- Added `/api/stats`, `/api/version`, `/api/clear-cache` and `POST /api/subdivision` to the OpenAPI spec, which previously documented none of them
+- Added a TTL to the `/api/coords` reverse geocoding cache (24 hours, configurable via the `REVERSE_GEOCODE_TTL` environment variable). `lru_cache` has no expiry of its own, so a result was previously pinned for the lifetime of a warm instance
+- Added unit tests for all of the above to the local test suite
+
+### Changed
+
+- **Breaking:** `/api/clear-cache` is now a POST endpoint requiring the token in an `X-Cache-Clear-Token` header, rather than a GET with a `?token` query string parameter, so the token no longer appears in access logs or browser history
+- The `/api/clear-cache` token is now compared using `hmac.compare_digest` to prevent recovering it via response timing
+- Flask debug mode is now opt-in via the `FLASK_DEBUG` environment variable rather than being hardcoded on, resolving the Bandit HIGH severity finding
+- Pinned all dependencies to upper version bounds so an upstream breaking release cannot reach production without an explicit bump
+- Consolidated the duplicated `?lang` and `?format` parsing across endpoints into shared `apply_lang` and `apply_format` helpers, so validation cannot drift between endpoints
+- Documented the previously undocumented `?limit` parameter, and the `?format`, `?lang`, `?limit`, `?page` and `?pageSize` parameters are now present in the OpenAPI spec
+- Moved the `if __name__ == '__main__'` block to the end of the test module; it previously sat above the local test class, so running the file directly never executed those tests
+- **Breaking:** `/api/version` now returns a JSON object, `{"version": "1.8.4"}`, rather than a bare string served as `text/html`, so callers no longer have to special case this endpoint against every other one
+- Updated the required version of the `iso3166-2` package to 1.8.4
+- The `iso3166-2` package's `". Did you mean: X, Y, Z?"` suggestion is now stripped in the shared `create_error_message` helper rather than in a single endpoint, so `/api/alpha` and `/api/list_subdivisions` no longer report the same invalid country code differently
+- `/api/search` no longer returns the `code` attribute that the package's `search()` adds, as it just repeats the subdivision code the result is already keyed by and is not returned by any other endpoint or accepted by `?filter`
+- The client IP used for rate limiting is now taken from `X-Vercel-Forwarded-For`/`X-Real-IP`, or the last `X-Forwarded-For` entry, rather than the first
+- The test suite now starts the Flask app on a local port and runs against that by default, so it tests the code in the working tree rather than whatever is currently deployed, and is not blocked by the bot protection in front of the live deployment. Set `ISO3166_2_API_URL` to test a deployed instance instead
+
+### Fixed
+
+- Fixed `filter_attributes` mutating the module level `all_attributes` list. A single `?filter=*&excludeMatchScore=0` request permanently appended `matchScore`, `countryCode` and `subdivisionCode` to the global list, which then leaked across all subsequent requests on a warm serverless instance and caused those names to be wrongly accepted as filter attributes on every endpoint
+- Fixed five country name aliases being unreachable because the lookup was keyed on `.title()` cased input while the alias map held non title-case keys. `UAE` and `USA` returned a 400, and `DR Congo` silently returned data for Congo (CG) instead of the Democratic Republic of the Congo (CD). Also affected `Sao Tome and Principe` and `French Southern and Antarctic Lands`
+- Fixed `?lang` validation being inconsistent between endpoints. Only `/api/alpha` validated the code against ISO 639, so an unrecognised code such as `?lang=zzz` returned a 200 with every `localOtherName` silently nulled out on `/api/all`, `/api/country_name` and `/api/subdivision`. All data endpoints now return a 400
+- Fixed an unhandled exception in `/api/coords` when the reverse geocoding provider returned a non-JSON body (e.g. a rate limit or gateway error page), which raised out of the handler as a 500
+- Fixed `?format` and `?lang` being silently ignored on `/api/search` when `excludeMatchScore=0`, as results are returned as a list rather than a nested object in that mode
+- Fixed `openapi.yaml` not being valid YAML. Unquoted response descriptions containing commas inside flow mappings, plus an unquoted `{country_code: ...}` brace, meant the spec served at `/openapi.yaml` could not be parsed by any OpenAPI tooling such as Swagger UI or client generators
+- Fixed `?filter` emptying out every `history` entry. The attribute filter recursed into the value of each attribute it kept, so the keys of the nested history objects (`Change`, `Date Issued`, `Description of Change`, `Source`) were themselves filtered out and `history` came back as `[{}]`. This also affected `?filter=*`, which is documented as returning everything, so any caller using the wildcard silently lost all history data
+- Fixed the rate limit being trivially bypassable. The client IP was read from the first `X-Forwarded-For` entry, which is whatever the caller sent rather than what a proxy wrote, so rotating the header reset the counter on every request. This left `/api/coords` able to drive unlimited requests at the OpenStreetMap Nominatim service through the deployment IP, risking a ban
+- Fixed the rate limiter wiping every caller's counter when its key dictionary exceeded 10,000 entries. It cleared the whole dictionary, including callers currently being limited, so a burst of unique keys reset the limiter on demand. Only keys whose window has fully expired are now evicted
+- Fixed `/api/random` being cached. The blanket `Cache-Control: public, max-age=3600` applied to it too, so the CDN in front of the API served the same "random" subdivision to every caller for an hour. It is now returned with `Cache-Control: no-store`
+- Fixed `?page` and `?pageSize` being silently ignored when combined with `?format=csv` or `?format=geojson` on `/api/all`, which serialised the entire dataset instead of the requested page. Pagination is now applied before the format conversion
+- Fixed the `/api/coords` 500 handler returning the raw exception text to the caller, which can carry internal paths and state. The detail is now logged and a generic message returned
+- Fixed path inputs being URL decoded twice on `/api/search`, `/api/search_geo`, `/api/country_name` and `/api/subdivision`. Flask has already decoded the path segment, so a second decode let a caller smuggle another layer of encoding through, e.g. `%2541` arriving as `A` rather than `%41`
+- Fixed a `ResourceWarning` from the test suite, which left the file handle returned by `send_from_directory` for `/openapi.yaml` unclosed
+- Updated the `/api/search` match score expectations in the test suite for the rescored fuzzy matching in `iso3166-2` 1.8.4, and stopped asserting the exact order of equally scored results, which the package does not guarantee
+
 ## 1.8.1/v1.8.2 - Feb 2026
 
 ### Added

@@ -7,8 +7,47 @@ from fake_useragent import UserAgent
 from jsonschema import validate, ValidationError
 from importlib.metadata import metadata
 from bs4 import BeautifulSoup
+import logging
+import sys
+import threading
+import time
 import unittest
+from werkzeug.serving import make_server
 unittest.TestLoader.sortTestMethodsUsing = None
+
+#handle on the background server started by setUpModule, so tearDownModule can shut it down
+_local_server = None
+
+def setUpModule():
+    """
+    Serve the API on a local ephemeral port and point the test suite at it, unless ISO3166_2_API_URL
+    already names an instance to test.
+
+    The suite used to default to the deployed instance, which meant it tested whatever was last
+    deployed rather than the code in the working tree, and Vercel's bot protection answers the
+    requests library with a security-checkpoint HTML page instead of JSON, so most tests failed
+    with a 403 or a JSONDecodeError regardless of the code being correct.
+    """
+    global _local_server
+    #an explicit url wins, so the deployed instance can still be tested on purpose
+    if os.environ.get("ISO3166_2_API_URL"):
+        return
+
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from index import app
+
+    #werkzeug logs a line per request, which buries the test results under a few hundred lines
+    logging.getLogger("werkzeug").setLevel(logging.ERROR)
+
+    #port 0 lets the OS pick a free port, so concurrent runs cannot collide
+    _local_server = make_server("127.0.0.1", 0, app, threaded=True)
+    threading.Thread(target=_local_server.serve_forever, daemon=True).start()
+    os.environ["ISO3166_2_API_URL"] = f"http://127.0.0.1:{_local_server.server_port}/api/"
+
+def tearDownModule():
+    """ Shut down the background server started by setUpModule, if there was one. """
+    if _local_server is not None:
+        _local_server.shutdown()
 
 # @unittest.skip("")
 class ISO3166_2_API_Tests(unittest.TestCase):
@@ -75,6 +114,11 @@ class ISO3166_2_API_Tests(unittest.TestCase):
         testing that the /openapi.yaml and /spec endpoints return the correct OpenAPI specification YAML file.
     test_version:
         testing the correct and up-to-date version of the iso3166-2 software is being used by the API.
+
+    Note: the tests in this class run against the live deployed API, so they validate what is
+    currently in production rather than the working copy. The ISO3166_2_API_Local_Tests class at
+    the bottom of this module runs the equivalent checks against the Flask app in-process, so
+    regressions are caught in a branch before it is deployed.
     """
     def setUp(self):
         """ Initialise test variables, import json. """
@@ -84,7 +128,11 @@ class ISO3166_2_API_Tests(unittest.TestCase):
         self.user_agent_header = {"User-Agent": user_agent.random, 'Accept': 'application/json'}
 
         #url endpoints for API
-        self.api_base_url = "https://iso3166-2-api.vercel.app/api/"
+        #base url for API - override with ISO3166_2_API_URL to test a local/preview instance, e.g. http://127.0.0.1:5000/api/
+        #ponytail: needed because Vercel's bot protection 403s the requests library's TLS fingerprint on the live deployment
+        self.api_base_url = os.environ.get("ISO3166_2_API_URL", "https://iso3166-2-api.vercel.app/api/")
+        #root url without the /api prefix, used to test the un-prefixed duplicate routes
+        self.root_base_url = self.api_base_url.removesuffix("api/")
         self.alpha_base_url = self.api_base_url + "alpha/"
         self.subdivision_base_url = self.api_base_url + "subdivision/"
         self.subdivision_post_url = self.api_base_url + "subdivision"
@@ -126,7 +174,7 @@ class ISO3166_2_API_Tests(unittest.TestCase):
         # last_updated = soup.find(id='last-updated').text.split(': ')[1]
         author = soup.find(id='author').text.split(': ')[1]
 
-        # self.assertEqual(version, "1.8.3", f"Expected API version to be 1.8.3, got {version}.") 
+        # self.assertEqual(version, self.__version__, f"Expected version to be {self.__version__}, got {version}.") #the frontend reads this from PyPI, so assert against the installed version rather than a hardcoded one
         # self.assertEqual(last_updated, "September 2025", f"Expected last updated date to be September 2025, got {last_updated}.")
         self.assertEqual(author, "AJ", f"Expected author to be AJ, got {author}.")
 #2.)
@@ -635,13 +683,14 @@ class ISO3166_2_API_Tests(unittest.TestCase):
             f"Expected subdivision object doesn't match observed object:\n{test_search_name_request_gelderland_overijssel}")
 #4.)        
         test_search_name_request_ciudad_likeness = requests.get(self.search_base_url + test_search_name_ciudad, headers=self.user_agent_header, params={"likeness": "60", "excludeMatchScore": 0}).json() #Ciudad - likeness score of 60, include the Match Score attribute
-        test_search_name_request_ciudad_likeness_expected = [{'countryCode': 'ES', 'flag': 'https://raw.githubusercontent.com/amckenna41/iso3166-flags/main/iso3166-2-flags/ES/ES-CR.svg', 'history': None, 'latLng': [38.9597, -3.8829], 'localOtherName': None, 
-            'matchScore': 75, 'name': 'Ciudad Real', 'parentCode': 'ES-CM', 'subdivisionCode': 'ES-CR', 'type': 'Province'}, {'countryCode': 'AO', 'flag': None, 'history': None, 'latLng': [-5.0564, 12.3212], 'localOtherName': 'Kabinda (kon), Portuguese Congo (eng)', 
-            'matchScore': 62, 'name': 'Cabinda', 'parentCode': None, 'subdivisionCode': 'AO-CAB', 'type': 'Province'}, {'countryCode': 'MX', 'flag': 'https://raw.githubusercontent.com/amckenna41/iso3166-flags/main/iso3166-2-flags/MX/MX-CMX.png', 
-            'history': [{'Change': 'Typographical correction of MX-CMX; update List source.', 'Date Issued': '2017-11-23', 'Description of Change': None, 'Source': 'Online Browsing Platform (OBP) - https://www.iso.org/obp/ui/#iso:code:3166:MX.'}, 
-            {'Change': 'Change of subdivision code from MX-DIF to MX-CMX; change of name of MX-CMX, MX-COA, MX-MIC, MX-VER; addition of local variation of MX-COA, MX-MIC, MX-VER; update list source.', 'Date Issued': '2016-11-15', 'Description of Change': None, 
-            'Source': 'Online Browsing Platform (OBP) - https://www.iso.org/obp/ui/#iso:code:3166:MX.'}], 'latLng': [19.3208, -99.1515], 'localOtherName': 'Mexico City (eng), CDMX (spa), Monda (oto), Mexihco Hueyaltepetl (nhn), U noj kaajil México (yua), CDMX (eng), La Ciudad de los Palacios (spa), The City of Palaces (eng)', 
-            'matchScore': 60, 'name': 'Ciudad de México', 'parentCode': None, 'subdivisionCode': 'MX-CMX', 'type': 'Federal entity'}]
+        #match scores below are those produced by iso3166-2 >= 1.8.4, which rescored fuzzy name matches - results stay sorted by descending score
+        test_search_name_request_ciudad_likeness_expected = [{'countryCode': 'ES', 'flag': 'https://raw.githubusercontent.com/amckenna41/iso3166-flags/main/iso3166-2-flags/ES/ES-CR.svg', 'history': None, 'latLng': [38.9597, -3.8829], 'localOtherName': None,
+            'matchScore': 80, 'name': 'Ciudad Real', 'parentCode': 'ES-CM', 'subdivisionCode': 'ES-CR', 'type': 'Province'}, {'countryCode': 'MX', 'flag': 'https://raw.githubusercontent.com/amckenna41/iso3166-flags/main/iso3166-2-flags/MX/MX-CMX.png',
+            'history': [{'Change': 'Typographical correction of MX-CMX; update List source.', 'Date Issued': '2017-11-23', 'Description of Change': None, 'Source': 'Online Browsing Platform (OBP) - https://www.iso.org/obp/ui/#iso:code:3166:MX.'},
+            {'Change': 'Change of subdivision code from MX-DIF to MX-CMX; change of name of MX-CMX, MX-COA, MX-MIC, MX-VER; addition of local variation of MX-COA, MX-MIC, MX-VER; update list source.', 'Date Issued': '2016-11-15', 'Description of Change': None,
+            'Source': 'Online Browsing Platform (OBP) - https://www.iso.org/obp/ui/#iso:code:3166:MX.'}], 'latLng': [19.3208, -99.1515], 'localOtherName': 'Mexico City (eng), CDMX (spa), Monda (oto), Mexihco Hueyaltepetl (nhn), U noj kaajil México (yua), CDMX (eng), La Ciudad de los Palacios (spa), The City of Palaces (eng)',
+            'matchScore': 69, 'name': 'Ciudad de México', 'parentCode': None, 'subdivisionCode': 'MX-CMX', 'type': 'Federal entity'}, {'countryCode': 'AO', 'flag': None, 'history': None, 'latLng': [-5.0564, 12.3212], 'localOtherName': 'Kabinda (kon), Portuguese Congo (eng)',
+            'matchScore': 62, 'name': 'Cabinda', 'parentCode': None, 'subdivisionCode': 'AO-CAB', 'type': 'Province'}]
         self.assertEqual(test_search_name_request_ciudad_likeness, test_search_name_request_ciudad_likeness_expected, 
             f"Expected subdivision object doesn't match observed object:\n{test_search_name_request_ciudad_likeness}")
 #5.)
@@ -676,8 +725,17 @@ class ISO3166_2_API_Tests(unittest.TestCase):
                                       'ES-CU', 'ES-MU', 'ET-SI', 'GB-CMD', 'GB-SND', 'GD-02', 'GN-D', 'GN-KD', 'GT-20', 'LC-08', 'LV-022', 'LV-091', 'MA-ERR', 'MD-OC', 'MW-CR', 'MX-COL', 'NI-CI', 'PG-CPK', 'PH-IFU', 'PT-09', 'SI-036', 'TV-NIT', 'TW-CYI', 'TW-CYQ', 'UG-217', 'UG-218', 'UG-324', 'UG-417', 
                                       'VC-03', 'VE-L', 'YE-HU']
         
-        self.assertEqual(observed_subdivision_codes, expected_subdivision_codes, 
+        #compare as sets - the package does not guarantee a stable tie-break between results sharing a match
+        #score, so pinning the exact order makes this test break on any upstream rescoring
+        self.assertEqual(set(observed_subdivision_codes), set(expected_subdivision_codes),
             f"Expected output object of API does not contain the expected subdivision keys, got {observed_subdivision_codes}.")
+        self.assertEqual(len(observed_subdivision_codes), len(expected_subdivision_codes),
+            f"Expected {len(expected_subdivision_codes)} search results, got {len(observed_subdivision_codes)}.")
+
+        #the ordering that is guaranteed - results sorted by descending match score
+        observed_match_scores = [item["matchScore"] for item in test_search_name_request_ciudad_likenesss_filter_all]
+        self.assertEqual(observed_match_scores, sorted(observed_match_scores, reverse=True),
+            f"Expected search results to be sorted by descending match score, got {observed_match_scores}.")
       
         #iterate ovr all search results, validating correct keys/attributes
         expected_keys = {"flag", "latLng", "localOtherName", "name", "parentCode", "type", "history", "subdivisionCode", "countryCode", "matchScore"}
@@ -694,7 +752,7 @@ class ISO3166_2_API_Tests(unittest.TestCase):
         self.assertEqual(test_request_subdivision_name_error2, test_request_subdivision_name_error2_expected, f"Expected and observed output error object do not match:\n{test_request_subdivision_name_error2}.")
 #12.)
         test_request_subdivision_name_error3 = requests.get(self.search_base_url + test_search_name_error3, headers=self.user_agent_header).json() #""        
-        test_request_subdivision_name_error3_expected = {'message': 'The search input parameter cannot be empty. Please pass in at least one search term.', 'path': 'https://iso3166-2-api.vercel.app/api/search/', 'status': 400}
+        test_request_subdivision_name_error3_expected = {'message': 'The search input parameter cannot be empty. Please pass in at least one search term.', 'path': f'{self.search_base_url}', 'status': 400}
         self.assertEqual(test_request_subdivision_name_error3, test_request_subdivision_name_error3_expected, f"Expected and observed output error object do not match:\n{test_request_subdivision_name_error3}.")
 #13.)
         # test_request_subdivision_name_invalid_attribute = requests.get(self.search_base_url + test_search_name_azua, headers=self.user_agent_header, params={"filter": "invalid_attribute"}).json() #invalid attribute input  
@@ -1113,7 +1171,7 @@ class ISO3166_2_API_Tests(unittest.TestCase):
         self.assertIn("invalid_attribute", error_response["message"], "Expected error message to mention the invalid attribute.")
 #11.)
         # Test the root /random endpoint (without /api prefix) also uses {country_code: {subdivision_code: data}}
-        test_request_root_random = requests.get("https://iso3166-2-api.vercel.app/random", headers=self.user_agent_header)
+        test_request_root_random = requests.get(f"{self.root_base_url}random", headers=self.user_agent_header)
         self.assertEqual(test_request_root_random.status_code, 200, f"Expected 200 status code from /random, got {test_request_root_random.status_code}.")
         root_random_response = test_request_root_random.json()
         self.assertEqual(len(root_random_response), 1, f"Expected /random response to contain exactly 1 country key, got {len(root_random_response)}.")
@@ -1149,12 +1207,12 @@ class ISO3166_2_API_Tests(unittest.TestCase):
         self.assertEqual(test_request_openapi_yaml.text, test_request_spec.text, "Expected /api/openapi.yaml and /api/spec to return identical content.")
 #5.)
         # Test the root /openapi.yaml endpoint (without /api prefix)
-        test_request_root_openapi = requests.get("https://iso3166-2-api.vercel.app/openapi.yaml", headers=self.user_agent_header)
+        test_request_root_openapi = requests.get(f"{self.root_base_url}openapi.yaml", headers=self.user_agent_header)
         self.assertEqual(test_request_root_openapi.status_code, 200, f"Expected 200 status code from /openapi.yaml, got {test_request_root_openapi.status_code}.")
         self.assertEqual(test_request_root_openapi.text, openapi_content, "Expected /openapi.yaml to return same content as /api/openapi.yaml.")
 #6.)
         # Test the root /spec endpoint (without /api prefix)
-        test_request_root_spec = requests.get("https://iso3166-2-api.vercel.app/spec", headers=self.user_agent_header)
+        test_request_root_spec = requests.get(f"{self.root_base_url}spec", headers=self.user_agent_header)
         self.assertEqual(test_request_root_spec.status_code, 200, f"Expected 200 status code from /spec, got {test_request_root_spec.status_code}.")
         self.assertEqual(test_request_root_spec.text, openapi_content, "Expected /spec to return same content as /api/openapi.yaml.")
 
@@ -1162,7 +1220,10 @@ class ISO3166_2_API_Tests(unittest.TestCase):
     def test_version(self):
         """ Testing the correct version of the iso3166-2 software is being used by the API. """
 #1.)
-        iso3166_2_api_version = requests.get(self.version_base_url, headers=self.user_agent_header).content.decode("utf-8")
+        test_request_version = requests.get(self.version_base_url, headers=self.user_agent_header)
+        self.assertIn("application/json", test_request_version.headers["content-type"],
+            f"Expected /api/version to return JSON, got {test_request_version.headers['content-type']}.")
+        iso3166_2_api_version = test_request_version.json()["version"]
         self.assertEqual(iso3166_2_api_version, self.__version__, f"Expected and observed version of the iso3166-2 software do not match {iso3166_2_api_version}.")
 
     # @unittest.skip("")
@@ -1307,11 +1368,6 @@ class ISO3166_2_API_Tests(unittest.TestCase):
         test_request_lang_invalid = requests.get(self.alpha_base_url + "DE", headers=self.user_agent_header, params={"lang": "xyz"})
         self.assertEqual(test_request_lang_invalid.status_code, 400, f"Expected 400 for unsupported lang=xyz, got {test_request_lang_invalid.status_code}.")
 
-if __name__ == '__main__':
-    #run all unit tests
-    unittest.main(verbosity=2)
-
-
 class ISO3166_2_API_Local_Tests(unittest.TestCase):
     """
     Local test suite for the ISO 3166-2 API using Flask's test client.
@@ -1425,11 +1481,28 @@ class ISO3166_2_API_Local_Tests(unittest.TestCase):
         self.assertRegex(subdivision_code, r"^[A-Z]{2}-[A-Z0-9]{1,3}$")
 
     def test_clear_cache_unauthorized_local(self):
-        """ Test /api/clear-cache without a token returns 401. """
-        response = self.client.get('/api/clear-cache')
+        """ Test /api/clear-cache requires POST and a valid token header. """
+        #endpoint is POST only, a GET is not allowed
+        self.assertEqual(self.client.get('/api/clear-cache').status_code, 405)
+
+        #POST without the token header is unauthorized
+        response = self.client.post('/api/clear-cache')
         self.assertEqual(response.status_code, 401)
         data = json.loads(response.data)
         self.assertIn('message', data)
+
+    def test_clear_cache_token_local(self):
+        """ Test /api/clear-cache accepts the correct token and rejects a wrong one. """
+        import index
+        original_token = index.CACHE_CLEAR_TOKEN
+        index.CACHE_CLEAR_TOKEN = "test-token"
+        try:
+            self.assertEqual(self.client.post('/api/clear-cache',
+                headers={"X-Cache-Clear-Token": "wrong-token"}).status_code, 401)
+            self.assertEqual(self.client.post('/api/clear-cache',
+                headers={"X-Cache-Clear-Token": "test-token"}).status_code, 200)
+        finally:
+            index.CACHE_CLEAR_TOKEN = original_token
 
     def test_404_local(self):
         """ Test unknown routes return 404. """
@@ -1522,3 +1595,322 @@ class ISO3166_2_API_Local_Tests(unittest.TestCase):
     def test_lang_invalid_local(self):
         """ Test ?lang=xyz (unsupported code) returns 400. """
         self.assertEqual(self.client.get('/api/alpha/DE?lang=xyz').status_code, 400)
+
+    def test_lang_validation_consistent_local(self):
+        """ Test an unrecognised ISO 639 code is a 400 on every data endpoint, not a silent no-op. """
+        for url in ['/api/all?limit=1&lang=zzz', '/api/alpha/AD?lang=zzz', '/api/country_name/Andorra?lang=zzz',
+                    '/api/subdivision/AD-02?lang=zzz', '/api/search_geo/42.5,1.5?lang=zzz']:
+            self.assertEqual(self.client.get(url).status_code, 400, f"Expected 400 for {url}.")
+        #a real ISO 639 code is still accepted
+        self.assertEqual(self.client.get('/api/alpha/AD?lang=cat').status_code, 200)
+
+    def test_filter_wildcard_does_not_mutate_global_local(self):
+        """ Test filter=* does not extend the module level all_attributes list across requests. """
+        import index
+        expected_attributes = list(index.all_attributes)
+        for _ in range(3):
+            index.filter_attributes("*", {"GB": {"GB-ABD": {"name": "x"}}}, exclude_match_score=0)
+        self.assertEqual(index.all_attributes, expected_attributes,
+            f"filter=* mutated the global attribute list: {index.all_attributes}.")
+
+        #and via HTTP, an unknown attribute must still be rejected after a wildcard search request
+        self.client.get('/api/search/Paris?filter=*&excludeMatchScore=0')
+        self.assertEqual(self.client.get('/api/all?filter=matchScore&limit=1').status_code, 400)
+
+    def test_country_name_aliases_local(self):
+        """ Test country name aliases that are not title-case still resolve to the right country. """
+        for name, expected_alpha2 in [("UAE", "AE"), ("USA", "US"), ("DR Congo", "CD"),
+                                      ("Sao Tome and Principe", "ST"), ("Turkey", "TR")]:
+            data = json.loads(self.client.get(f'/api/country_name/{name}').data)
+            self.assertEqual(list(data.keys()), [expected_alpha2],
+                f"Expected {name} to resolve to {expected_alpha2}, got {list(data.keys())}.")
+
+    def test_search_match_score_format_and_order_local(self):
+        """ Test ?format and ?lang apply when matchScore is included, and score ordering is kept. """
+        self.assertIn('text/csv', self.client.get('/api/search/Paris?excludeMatchScore=0&format=csv').content_type)
+        self.assertEqual(self.client.get('/api/search/Paris?excludeMatchScore=0&lang=zzz').status_code, 400)
+
+        #results stay a list carrying matchScore
+        data = json.loads(self.client.get('/api/search/Paris?excludeMatchScore=0').data)
+        self.assertIsInstance(data, list)
+        self.assertIn('matchScore', data[0])
+
+        #the nest/flatten round trip must not regroup results by country
+        scores = [r["matchScore"] for r in json.loads(
+            self.client.get('/api/search/Ciudad?likeness=50&excludeMatchScore=0').data)]
+        self.assertEqual(scores, sorted(scores, reverse=True),
+            f"Expected search results to stay ordered by match score, got {scores}.")
+
+    def test_cors_headers_local(self):
+        """ Test CORS headers are present so the API is callable from a browser. """
+        response = self.client.get('/api/alpha/AD')
+        self.assertEqual(response.headers.get('Access-Control-Allow-Origin'), '*')
+        self.assertEqual(self.client.options('/api/all').status_code, 200)
+
+    def test_etag_revalidation_local(self):
+        """ Test an ETag is returned and If-None-Match yields a 304 Not Modified. """
+        for url in ['/api/alpha/AD', '/api/stats', '/api/all?limit=1&format=csv']:
+            response = self.client.get(url)
+            etag = response.headers.get('ETag')
+            self.assertIsNotNone(etag, f"Expected an ETag header on {url}.")
+            self.assertEqual(self.client.get(url, headers={"If-None-Match": etag}).status_code, 304)
+
+    def test_list_subdivisions_format_local(self):
+        """ Test /api/list_subdivisions supports ?format=csv but rejects geojson. """
+        response = self.client.get('/api/list_subdivisions/AD?format=csv')
+        self.assertIn('text/csv', response.content_type)
+        self.assertIn('countryCode,subdivisionCode', response.data.decode('utf-8'))
+        self.assertEqual(self.client.get('/api/list_subdivisions/AD?format=geojson').status_code, 400)
+
+    def test_search_geo_and_post_format_local(self):
+        """ Test ?format is supported on /api/search_geo and POST /api/subdivision. """
+        self.assertIn('geo+json', self.client.get('/api/search_geo/42.5,1.5?format=geojson').content_type)
+        response = self.client.post('/api/subdivision?format=csv', json={"codes": ["AD-02"]},
+                                    content_type='application/json')
+        self.assertIn('text/csv', response.content_type)
+
+    def test_nearest_subdivision_local(self):
+        """ Test the offline nearest-subdivision lookup used as the /api/coords fallback. """
+        import index
+        country_code, subdivision_code = index.nearest_subdivision(48.8566, 2.3522, "FR")
+        self.assertEqual(country_code, "FR")
+        self.assertTrue(subdivision_code.startswith("FR-"))
+        #unrestricted, Paris coordinates should still land in France
+        self.assertEqual(index.nearest_subdivision(48.8566, 2.3522)[0], "FR")
+
+    def test_coords_offline_fallback_local(self):
+        """ Test /api/coords falls back to the local dataset when the geocoding provider fails. """
+        import index
+        from unittest.mock import patch
+        index._reverse_geocode_cached.cache_clear()
+        index._rate_limit_hits.clear()
+        try:
+            with patch.object(index.requests, 'get', side_effect=requests.exceptions.ConnectionError("down")):
+                response = self.client.get('/api/coords?lat=48.8566&lng=2.3522')
+            self.assertEqual(response.status_code, 200)
+            data = json.loads(response.data)
+            self.assertIn("FR", data)
+        finally:
+            index._reverse_geocode_cached.cache_clear()
+            index._rate_limit_hits.clear()
+
+    def test_coords_rate_limit_local(self):
+        """ Test /api/coords rate limits a single client to protect the upstream provider. """
+        import index
+        from unittest.mock import patch
+        index._rate_limit_hits.clear()
+        try:
+            with patch.object(index.requests, 'get', side_effect=requests.exceptions.ConnectionError("down")):
+                observed = {self.client.get('/api/coords?lat=48.85&lng=2.35').status_code
+                            for _ in range(index.COORDS_RATE_LIMIT + 5)}
+            self.assertIn(429, observed, f"Expected a 429 once the rate limit was exceeded, got {observed}.")
+        finally:
+            index._rate_limit_hits.clear()
+
+    def test_rate_limiter_local(self):
+        """ Test the rate limiter allows up to the limit then blocks. """
+        import index
+        index._rate_limit_hits.clear()
+        try:
+            self.assertFalse(any(index.rate_limited("unit-test-key", 3, 60.0) for _ in range(3)))
+            self.assertTrue(index.rate_limited("unit-test-key", 3, 60.0))
+        finally:
+            index._rate_limit_hits.clear()
+
+    def test_openapi_spec_parses_local(self):
+        """ Test the served OpenAPI spec is valid YAML and documents the supported query params. """
+        try:
+            import yaml
+        except ImportError:
+            self.skipTest("PyYAML not installed")
+        #close the response explicitly - send_from_directory hands back an open file handle that the
+        #test client will not release on its own, which leaks the descriptor as a ResourceWarning
+        with self.client.get('/openapi.yaml') as response:
+            spec = yaml.safe_load(response.data.decode('utf-8'))
+        self.assertIn("paths", spec)
+        documented_params = {p.get("$ref", "").split("/")[-1] for path in spec["paths"].values()
+                             for operation in path.values() for p in operation.get("parameters", [])}
+        for param in ["Format", "Lang", "Limit", "Page", "PageSize"]:
+            self.assertIn(param, documented_params, f"Expected '{param}' to be documented in openapi.yaml.")
+
+    def test_openapi_documents_all_endpoints_local(self):
+        """ Test every endpoint that takes an argument or a body is present in the OpenAPI spec. """
+        try:
+            import yaml
+        except ImportError:
+            self.skipTest("PyYAML not installed")
+        with self.client.get('/openapi.yaml') as response:
+            spec = yaml.safe_load(response.data.decode('utf-8'))
+        for path in ["/all", "/stats", "/version", "/clear-cache", "/subdivision", "/random", "/coords"]:
+            self.assertIn(path, spec["paths"], f"Expected '{path}' to be documented in openapi.yaml.")
+        #the bulk lookup is a POST on the same path as the GET form, so check the verb too
+        self.assertIn("post", spec["paths"]["/subdivision"], "Expected POST /subdivision to be documented in openapi.yaml.")
+        self.assertIn("post", spec["paths"]["/clear-cache"], "Expected POST /clear-cache to be documented in openapi.yaml.")
+
+    def test_filter_preserves_history_entries_local(self):
+        """ Test filtering keeps whole history entries rather than emptying them out. """
+        expected_history_keys = {"Change", "Date Issued", "Description of Change", "Source"}
+#1.)    #a named attribute is returned whole
+        response = self.client.get('/api/subdivision/FJ-03?filter=history')
+        history = json.loads(response.data)["FJ"]["FJ-03"]["history"]
+        self.assertTrue(history, "Expected ?filter=history to return the history entries, got an empty value.")
+        self.assertEqual(set(history[0].keys()), expected_history_keys,
+            f"Expected the history entry to keep all of its keys, got {list(history[0].keys())}.")
+#2.)    #the wildcard is documented as returning everything, so it must not empty history either
+        wildcard = json.loads(self.client.get('/api/subdivision/FJ-03?filter=*').data)["FJ"]["FJ-03"]
+        self.assertEqual(set(wildcard["history"][0].keys()), expected_history_keys,
+            f"Expected ?filter=* to keep all history entry keys, got {list(wildcard['history'][0].keys())}.")
+        for attribute in self.correct_subdivision_keys:
+            self.assertIn(attribute, wildcard, f"Expected ?filter=* to return the {attribute} attribute.")
+#3.)    #filtering still actually excludes what was not asked for
+        filtered = json.loads(self.client.get('/api/subdivision/FJ-03?filter=name').data)["FJ"]["FJ-03"]
+        self.assertEqual(list(filtered.keys()), ["name"], f"Expected only the name attribute, got {list(filtered.keys())}.")
+
+    def test_client_ip_ignores_spoofable_header_local(self):
+        """ Test the rate limit key comes from a proxy set header rather than the caller's own. """
+        import index
+#1.)    #X-Forwarded-For is appended to by each proxy, so its first entry is caller supplied
+        with index.app.test_request_context('/', headers={'X-Forwarded-For': '1.2.3.4, 203.0.113.9'}):
+            self.assertEqual(index.client_ip(), '203.0.113.9',
+                "Expected the last X-Forwarded-For entry to be used, not the caller supplied first one.")
+#2.)    #headers written by the platform itself take precedence over X-Forwarded-For entirely
+        with index.app.test_request_context('/', headers={'X-Vercel-Forwarded-For': '203.0.113.9', 'X-Forwarded-For': '1.2.3.4'}):
+            self.assertEqual(index.client_ip(), '203.0.113.9', "Expected X-Vercel-Forwarded-For to take precedence.")
+#3.)    #with no proxy headers at all it falls back to the socket address
+        with index.app.test_request_context('/'):
+            self.assertIsNotNone(index.client_ip(), "Expected a fallback client IP when no proxy headers are present.")
+
+    def test_rate_limiter_eviction_local(self):
+        """ Test evicting idle keys does not reset the counters of callers currently being limited. """
+        import index
+        index._rate_limit_hits.clear()
+        try:
+            now = time.monotonic()
+            #a caller mid-window, plus enough long expired keys to trip the eviction threshold
+            index._rate_limit_hits['active'] = [now] * 5
+            for i in range(10001):
+                index._rate_limit_hits[f'expired{i}'] = [now - 9999]
+            index.rate_limited('active', 100, 60.0)
+            self.assertEqual(len(index._rate_limit_hits['active']), 6,
+                "Expected the active caller's hits to be preserved through an eviction, not cleared.")
+            self.assertEqual(len(index._rate_limit_hits), 1,
+                f"Expected the expired keys to be evicted, got {len(index._rate_limit_hits)} keys remaining.")
+        finally:
+            index._rate_limit_hits.clear()
+
+    def test_all_rate_limit_local(self):
+        """ Test /api/all is rate limited, as it returns the entire dataset in one response. """
+        import index
+        index._rate_limit_hits.clear()
+        try:
+            observed = {self.client.get('/api/all?limit=1').status_code for _ in range(index.ALL_RATE_LIMIT + 3)}
+            self.assertIn(429, observed, f"Expected a 429 once the /api/all rate limit was exceeded, got {observed}.")
+        finally:
+            index._rate_limit_hits.clear()
+
+    def test_coords_and_random_format_and_lang_local(self):
+        """ Test /coords and /random honour ?format and ?lang like every other data endpoint. """
+        import index
+        index._rate_limit_hits.clear()
+        try:
+            for path in ['/api/coords?lat=53.35&lng=-6.26&', '/api/random?']:
+                self.assertIn('text/csv', self.client.get(path + 'format=csv').content_type,
+                    f"Expected {path} to support ?format=csv.")
+                self.assertIn('application/geo+json', self.client.get(path + 'format=geojson').content_type,
+                    f"Expected {path} to support ?format=geojson.")
+                self.assertEqual(self.client.get(path + 'format=xml').status_code, 400,
+                    f"Expected {path} to reject an unsupported ?format value with a 400.")
+                self.assertEqual(self.client.get(path + 'lang=zzz').status_code, 400,
+                    f"Expected {path} to reject an unrecognised ?lang code with a 400.")
+        finally:
+            index._rate_limit_hits.clear()
+
+    def test_version_endpoint_local(self):
+        """ Test /api/version returns JSON rather than a bare string. """
+        response = self.client.get('/api/version')
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('application/json', response.content_type,
+            f"Expected /api/version to return JSON, got {response.content_type}.")
+        self.assertEqual(json.loads(response.data)["version"], metadata('iso3166-2')['version'],
+            "Expected /api/version to report the installed iso3166-2 version.")
+
+    def test_all_pagination_with_format_local(self):
+        """ Test pagination is applied before the format conversion rather than being ignored by it. """
+        import index
+        index._rate_limit_hits.clear()
+        try:
+            page_size = 3
+            response = self.client.get(f'/api/all?format=csv&page=2&pageSize={page_size}')
+            self.assertIn('text/csv', response.content_type)
+            #pagination counts countries, so compare against the same page of the JSON response
+            expected = json.loads(self.client.get(f'/api/all?page=2&pageSize={page_size}').data)
+            expected_rows = sum(len(subdivisions) for subdivisions in expected["data"].values())
+            rows = response.data.decode('utf-8').strip().split('\n')
+            self.assertEqual(len(rows) - 1, expected_rows,
+                f"Expected the csv to contain only page 2, got {len(rows) - 1} rows for {expected_rows} subdivisions.")
+            #csv/geojson have no envelope, so the metadata is returned in headers instead
+            self.assertEqual(response.headers.get('X-Page'), '2')
+            self.assertEqual(response.headers.get('X-Page-Size'), str(page_size))
+            self.assertEqual(response.headers.get('X-Total-Countries'), str(expected["totalCountries"]))
+            self.assertEqual(response.headers.get('X-Total-Pages'), str(expected["totalPages"]))
+        finally:
+            index._rate_limit_hits.clear()
+
+    def test_csv_formula_injection_escaped_local(self):
+        """ Test csv cells that would be evaluated as a spreadsheet formula are neutralised. """
+        import index
+        for dangerous in ['=cmd()', '+1+1', '-1', '@SUM(A1)', '\tx', '\rx']:
+            self.assertTrue(index.csv_safe(dangerous).startswith("'"),
+                f"Expected {dangerous!r} to be prefixed with a quote in csv output.")
+        #ordinary values must pass through untouched, and None becomes an empty cell
+        self.assertEqual(index.csv_safe('Dublin'), 'Dublin')
+        self.assertEqual(index.csv_safe(None), '')
+
+    def test_reverse_geocode_cache_expires_local(self):
+        """ Test the reverse geocode cache key rolls over time so entries cannot be pinned forever. """
+        import index
+        self.assertGreater(index.REVERSE_GEOCODE_TTL, 0, "Expected a positive reverse geocode TTL.")
+        #the ttl bucket is part of the cache key, so two different buckets are two different entries
+        self.assertNotEqual(int(0 // index.REVERSE_GEOCODE_TTL), int(index.REVERSE_GEOCODE_TTL * 2 // index.REVERSE_GEOCODE_TTL),
+            "Expected the ttl bucket to change across a TTL boundary.")
+
+    def test_no_double_url_decoding_local(self):
+        """ Test path inputs are decoded once, so a second layer of encoding cannot be smuggled in. """
+#1.)    #%2541 is an encoded '%41'. decoding twice would turn it into 'A' and match a real subdivision
+        response = self.client.get('/api/search/%2541')
+        self.assertIn("Message", json.loads(response.data),
+            "Expected the double encoded search term to find nothing rather than being decoded twice.")
+#2.)    #ordinary and encoded inputs must still work
+        self.assertIn("DO", json.loads(self.client.get('/api/search/Azua').data))
+        self.assertIn("IE", json.loads(self.client.get('/api/country_name/Ireland').data))
+        self.assertIn("ZA", json.loads(self.client.get('/api/country_name/South+Africa').data))
+        self.assertEqual(sorted(json.loads(self.client.get('/api/subdivision/TV-NKF,%20TJ-DU').data)), ["TJ", "TV"])
+
+    def test_random_is_not_cached_local(self):
+        """ Test /random is served no-store, a cached response would pin one subdivision for everyone. """
+        response = self.client.get('/api/random')
+        self.assertIn('no-store', response.headers.get('Cache-Control', ''),
+            f"Expected /api/random to be no-store, got {response.headers.get('Cache-Control')}.")
+        self.assertIsNone(response.headers.get('ETag'), "Expected no ETag on /api/random.")
+        #other data endpoints must still be cacheable
+        self.assertIn('max-age=3600', self.client.get('/api/alpha/IE').headers.get('Cache-Control', ''),
+            "Expected /api/alpha to still carry a Cache-Control max-age.")
+
+    def test_error_message_suggestions_stripped_local(self):
+        """ Test the package's 'Did you mean' suggestion is stripped consistently across endpoints. """
+        for path in ['/api/alpha/ABC', '/api/list_subdivisions/ABC']:
+            message = json.loads(self.client.get(path).data)["message"]
+            self.assertNotIn("Did you mean", message,
+                f"Expected the suggestion suffix to be stripped from the {path} error, got {message!r}.")
+
+    def test_search_excludes_redundant_code_attribute_local(self):
+        """ Test /search does not leak the package's 'code' attribute, which repeats the result key. """
+        nested = json.loads(self.client.get('/api/search/Azua').data)
+        self.assertNotIn("code", nested["DO"]["DO-02"],
+            "Expected /search to return the same attribute set as every other endpoint.")
+        flat = json.loads(self.client.get('/api/search/Azua?excludeMatchScore=0').data)
+        self.assertNotIn("code", flat[0], "Expected the match score results to exclude the redundant code attribute.")
+
+if __name__ == "__main__":
+    #run all unit tests
+    unittest.main(verbosity=2)

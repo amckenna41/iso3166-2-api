@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: iso3166-2 API
-  version: "1.8.2"
+  version: "1.8.4"
   description: |
     REST API for ISO 3166-2 subdivision data (name, localOtherName, code, parentCode, type, latLng, flag, history).
     Base URL serves docs; all routes below are relative to /api.
@@ -50,6 +50,63 @@ components:
         oneOf:
           - type: boolean
           - type: integer
+    Format:
+      name: format
+      in: query
+      description: |
+        Output format. `csv` returns a downloadable CSV with one row per subdivision.
+        `geojson` returns a FeatureCollection with `latLng` as Point geometry.
+      required: false
+      schema:
+        type: string
+        enum: [json, csv, geojson]
+        default: json
+    Lang:
+      name: lang
+      in: query
+      description: |
+        Filter the `localOtherName` attribute to entries in this ISO 639 language code
+        (e.g. `fra`, `deu`). An unrecognised code returns a 400.
+      required: false
+      schema:
+        type: string
+        example: fra
+    FormatCodes:
+      name: format
+      in: query
+      description: Output format for the codes list. `csv` returns countryCode,subdivisionCode rows.
+      required: false
+      schema:
+        type: string
+        enum: [json, csv]
+        default: json
+    Limit:
+      name: limit
+      in: query
+      description: Limit `/all` to the first N countries.
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+    Page:
+      name: page
+      in: query
+      description: Page number for paginated `/all` responses. Pagination activates only when `page` or `pageSize` is set.
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+    PageSize:
+      name: pageSize
+      in: query
+      description: Number of countries per page for paginated `/all` responses.
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 250
+        default: 50
   schemas:
     Error:
       type: object
@@ -127,8 +184,18 @@ paths:
     get:
       tags: [Countries]
       summary: Get subdivision data for all countries
+      description: |
+        Returns the entire dataset, so this endpoint is rate limited per caller (see the 429
+        response). When `page`/`pageSize` are supplied alongside `format=csv` or `format=geojson`,
+        only the requested page is serialised and the pagination metadata is returned in the
+        `X-Page`, `X-Page-Size`, `X-Total-Pages` and `X-Total-Countries` response headers.
       parameters:
         - $ref: "#/components/parameters/FilterAttributes"
+        - $ref: "#/components/parameters/Format"
+        - $ref: "#/components/parameters/Lang"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
       responses:
         "200":
           description: Country map of subdivision objects
@@ -147,7 +214,13 @@ paths:
                   FR-75: { code: "FR-75", name: "Paris", type: "metropolitan department" }
                 DE:
                   DE-BE: { code: "DE-BE", name: "Berlin", type: "state" }
-        "400": { description: Bad request, invalid parameters, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+          headers:
+            X-Page: { description: "Current page, present only when paginating a csv/geojson response", schema: { type: integer } }
+            X-Page-Size: { description: "Countries per page, present only when paginating a csv/geojson response", schema: { type: integer } }
+            X-Total-Pages: { description: "Total pages, present only when paginating a csv/geojson response", schema: { type: integer } }
+            X-Total-Countries: { description: "Total countries, present only when paginating a csv/geojson response", schema: { type: integer } }
+        "400": { description: "Bad request, invalid parameters", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "429": { description: "Rate limit exceeded for this endpoint", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
   /alpha/{input}:
     get:
       tags: [Countries]
@@ -161,6 +234,8 @@ paths:
           schema: { type: string }
           example: "FR,DEU,276"
         - $ref: "#/components/parameters/FilterAttributes"
+        - $ref: "#/components/parameters/Format"
+        - $ref: "#/components/parameters/Lang"
       responses:
         "200":
           description: Country map of subdivision objects
@@ -177,7 +252,7 @@ paths:
                   FR-01: { code: "FR-01", name: "Ain", type: "metropolitan department" }
                 DE:
                   DE-HE: { code: "DE-HE", name: "Hessen", type: "state" }
-        "400": { description: Invalid country code(s), content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "400": { description: "Invalid country code(s)", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
   /subdivision/{input}:
     get:
       tags: [Subdivisions]
@@ -190,6 +265,8 @@ paths:
           schema: { type: string }
           example: "LV-007,PA-3,ZA-NC"
         - $ref: "#/components/parameters/FilterAttributes"
+        - $ref: "#/components/parameters/Format"
+        - $ref: "#/components/parameters/Lang"
       responses:
         "200":
           description: Map of subdivisionCode -> Subdivision
@@ -202,7 +279,7 @@ paths:
               example:
                 "LV-007": { code: "LV-007", name: "Alūksne Municipality", type: "municipality" }
                 "PA-3":   { code: "PA-3",   name: "Colón",               type: "province" }
-        "400": { description: Invalid subdivision code(s), content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "400": { description: "Invalid subdivision code(s)", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
   /country_name/{input}:
     get:
       tags: [Countries]
@@ -217,6 +294,8 @@ paths:
           example: "Tajikistan,Seychelles,Uganda"
         - $ref: "#/components/parameters/Likeness"
         - $ref: "#/components/parameters/FilterAttributes"
+        - $ref: "#/components/parameters/Format"
+        - $ref: "#/components/parameters/Lang"
       responses:
         "200":
           description: Country map of subdivision objects
@@ -233,7 +312,7 @@ paths:
                   TJ-DU: { code: "TJ-DU", name: "Dushanbe", type: "capital territory" }
                 SC:
                   SC-01: { code: "SC-01", name: "Anse aux Pins", type: "district" }
-        "400": { description: Invalid or unmatched country name(s), content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "400": { description: "Invalid or unmatched country name(s)", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
   /search/{input}:
     get:
       tags: [Search]
@@ -249,6 +328,8 @@ paths:
         - $ref: "#/components/parameters/Likeness"
         - $ref: "#/components/parameters/ExcludeMatchScore"
         - $ref: "#/components/parameters/FilterAttributes"
+        - $ref: "#/components/parameters/Format"
+        - $ref: "#/components/parameters/Lang"
       responses:
         "200":
           description: Map of subdivisionCode -> Subdivision (optionally with matchScore)
@@ -264,7 +345,7 @@ paths:
                 "DE-SL": { code: "DE-SL", name: "Saarland", type: "state", matchScore: 100 }
                 "SR-BR": { code: "SR-BR", name: "Brokopondo", type: "district", matchScore: 98 }
                 "US-DE": { code: "US-DE", name: "Delaware", type: "state", matchScore: 97 }
-        "400": { description: No matches or invalid input, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "400": { description: "No matches or invalid input", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
   /search_geo/{input}:
     get:
       tags: [Search]
@@ -280,6 +361,8 @@ paths:
           example: "39.4178,-2.6232"
         - $ref: "#/components/parameters/RadiusKm"
         - $ref: "#/components/parameters/FilterAttributes"
+        - $ref: "#/components/parameters/Format"
+        - $ref: "#/components/parameters/Lang"
       responses:
         "200":
           description: Country map of subdivision objects within the search radius
@@ -294,11 +377,13 @@ paths:
               example:
                 ES:
                   ES-CM: { code: "ES-CM", name: "Castilla-La Mancha", type: "Autonomous community" }
-        "400": { description: Invalid input, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "400": { description: "Invalid input", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
   /list_subdivisions:
     get:
       tags: [Utility]
       summary: List all subdivision codes per country
+      parameters:
+        - $ref: "#/components/parameters/FormatCodes"
       responses:
         "200":
           description: Map of country alpha-2 -> array of subdivision codes
@@ -323,6 +408,7 @@ paths:
           required: true
           schema: { type: string }
           example: "DE"
+        - $ref: "#/components/parameters/FormatCodes"
       responses:
         "200":
           description: Array of subdivision codes for the given country
@@ -332,14 +418,16 @@ paths:
                 type: array
                 items: { type: string }
               example: ["DE-BB","DE-BE","DE-BW"]
-        "400": { description: Invalid country code, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "400": { description: "Invalid country code", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
   /random:
     get:
       tags: [Utility]
       summary: Get a random subdivision
-      description: Returns one randomly selected subdivision from the full dataset, wrapped in the standard `{country_code: {subdivision_code: data}}` format.
+      description: "Returns one randomly selected subdivision from the full dataset, wrapped in the standard `{country_code: {subdivision_code: data}}` format."
       parameters:
         - $ref: "#/components/parameters/FilterAttributes"
+        - $ref: "#/components/parameters/Format"
+        - $ref: "#/components/parameters/Lang"
       responses:
         "200":
           description: A single randomly selected subdivision
@@ -354,7 +442,7 @@ paths:
               example:
                 US:
                   US-CA: { name: "California", type: "state" }
-        "400": { description: Invalid filter parameter, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "400": { description: "Invalid filter parameter", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
   /coords:
     get:
       tags: [Search]
@@ -374,6 +462,8 @@ paths:
           schema: { type: number, minimum: -180, maximum: 180 }
           example: -0.1278
         - $ref: "#/components/parameters/FilterAttributes"
+        - $ref: "#/components/parameters/Format"
+        - $ref: "#/components/parameters/Lang"
       responses:
         "200":
           description: Subdivision at the given coordinates
@@ -388,6 +478,117 @@ paths:
               example:
                 GB:
                   GB-ENG: { name: "England", type: "country" }
-        "400": { description: Invalid or missing lat/lng parameters, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
-        "404": { description: No subdivision found at coordinates, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
-        "500": { description: Error connecting to OpenStreetMap API, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "400": { description: "Invalid or missing lat/lng parameters", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "404": { description: "No subdivision found at coordinates", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "429": { description: "Rate limit exceeded for this endpoint", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "500": { description: "Error connecting to OpenStreetMap API", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+  /subdivision:
+    post:
+      tags: [Subdivisions]
+      summary: Bulk subdivision lookup
+      description: |
+        Look up many subdivisions in one call via a JSON body, for payloads that would exceed URL
+        length limits on the GET form. A maximum of 500 codes may be submitted per request.
+      parameters:
+        - $ref: "#/components/parameters/FilterAttributes"
+        - $ref: "#/components/parameters/Format"
+        - $ref: "#/components/parameters/Lang"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [codes]
+              properties:
+                codes:
+                  type: array
+                  minItems: 1
+                  maxItems: 500
+                  items: { type: string }
+              example:
+                codes: ["GB-ABD", "FR-75", "US-CA"]
+      responses:
+        "200":
+          description: Subdivision data keyed by country code then subdivision code
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties:
+                  type: object
+                  additionalProperties:
+                    $ref: "#/components/schemas/Subdivision"
+        "400": { description: "Missing/invalid body, unknown code, or more than 500 codes", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+  /stats:
+    get:
+      tags: [Utility]
+      summary: Dataset statistics
+      description: Live counts and coverage figures for the ISO 3166-2 dataset backing the API.
+      responses:
+        "200":
+          description: Dataset statistics
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  totalCountries: { type: integer }
+                  totalSubdivisions: { type: integer }
+                  countriesWithSubdivisions: { type: integer }
+                  countriesWithoutSubdivisions: { type: integer }
+                  averageSubdivisionsPerCountry: { type: number }
+                  maxSubdivisions:
+                    type: object
+                    properties:
+                      country: { type: string }
+                      count: { type: integer }
+                  minSubdivisions:
+                    type: object
+                    properties:
+                      country: { type: string }
+                      count: { type: integer }
+                  flagCoverage:
+                    type: object
+                    properties:
+                      count: { type: integer }
+                      percentage: { type: number }
+                  packageVersion: { type: string }
+  /version:
+    get:
+      tags: [Utility]
+      summary: Get the iso3166-2 package version
+      description: Version of the iso3166-2 package the API is currently serving data from.
+      responses:
+        "200":
+          description: The package version
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  version: { type: string }
+              example: { version: "1.8.4" }
+  /clear-cache:
+    post:
+      tags: [Utility]
+      summary: Clear the cached dataset
+      description: |
+        Drop the cached Subdivisions instance and all derived caches so the next request reloads
+        the dataset. Requires the `CACHE_CLEAR_TOKEN` value in the `X-Cache-Clear-Token` header.
+      parameters:
+        - name: X-Cache-Clear-Token
+          in: header
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Cache cleared
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+              example: { message: "Cache cleared" }
+        "401": { description: "Missing or invalid token", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }

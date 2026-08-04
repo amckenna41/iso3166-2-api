@@ -1,5 +1,5 @@
 iso3166
-iso3166-2>=1.8.3
+iso3166-2>=1.8.4
 flask
 requests
 unidecode
@@ -8,7 +8,8 @@ pycountry
 fake_useragent
 BeautifulSoup4
 jsonschema
-pytest 
+pyyaml
+pytest
 pytest-cov 
 bandit
 safety 
