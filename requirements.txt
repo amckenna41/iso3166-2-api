@@ -1,6 +1,6 @@
 #upper bounds pin each dependency to its current major version so an upstream breaking release
 #cannot reach production without an explicit bump here
-flask>=3.0,<4.0
+flask>=3.1.3,<4.0
 requests>=2.32,<3.0
 unidecode>=1.3,<2.0
 thefuzz>=0.22,<1.0
