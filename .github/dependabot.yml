@@ -1,0 +1,17 @@
+version: 2
+updates:
+  #python dependencies, both the production requirements and the test-only ones
+  - package-ecosystem: pip
+    directories:
+      - "/"
+      - "/tests"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+
+  #actions used by the build/test workflow
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
