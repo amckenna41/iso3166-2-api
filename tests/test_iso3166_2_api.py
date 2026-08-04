@@ -744,11 +744,11 @@ class ISO3166_2_API_Tests(unittest.TestCase):
             self.assertEqual(actual_keys, expected_keys, f"Expected keys {expected_keys}, but got {actual_keys} for subdivision {obj.get('subdivisionCode')}")
 #10.)
         test_request_subdivision_name_error1 = requests.get(self.search_base_url + test_search_name_error1, headers=self.user_agent_header).json() #blahblahblah
-        test_request_subdivision_name_error1_expected = {'Message': f"No matching subdivision data found with the given search term(s): {test_search_name_error1}. Try using the query string parameter '?likeness' and reduce the likeness score to expand the search space, '?likeness=30' will return subdivision data that have a 30% match to the input name. The current likeness score is set to 100."}
+        test_request_subdivision_name_error1_expected = {'Message': f"No matching subdivision data found with the given search term(s): {test_search_name_error1}. Try using the query string parameter '?likeness' and reduce the likeness score to expand the search space, for example '?likeness=30' will return subdivision data that have a 30% match to the input name. The current likeness score is set to 100."}
         self.assertEqual(test_request_subdivision_name_error1, test_request_subdivision_name_error1_expected, f"Expected and observed output error object do not match:\n{test_request_subdivision_name_error1}.")
 #11.)
         test_request_subdivision_name_error2 = requests.get(self.search_base_url + test_search_name_error2, headers=self.user_agent_header).json() #1234        
-        test_request_subdivision_name_error2_expected = {'Message': f"No matching subdivision data found with the given search term(s): {test_search_name_error2}. Try using the query string parameter '?likeness' and reduce the likeness score to expand the search space, '?likeness=30' will return subdivision data that have a 30% match to the input name. The current likeness score is set to 100."}
+        test_request_subdivision_name_error2_expected = {'Message': f"No matching subdivision data found with the given search term(s): {test_search_name_error2}. Try using the query string parameter '?likeness' and reduce the likeness score to expand the search space, for example '?likeness=30' will return subdivision data that have a 30% match to the input name. The current likeness score is set to 100."}
         self.assertEqual(test_request_subdivision_name_error2, test_request_subdivision_name_error2_expected, f"Expected and observed output error object do not match:\n{test_request_subdivision_name_error2}.")
 #12.)
         test_request_subdivision_name_error3 = requests.get(self.search_base_url + test_search_name_error3, headers=self.user_agent_header).json() #""        

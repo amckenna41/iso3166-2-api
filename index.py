@@ -655,7 +655,7 @@ def api_search(input_search_term: str="") -> tuple[dict, int]:
 
     #return message that no search results were found
     if not search_results:
-        return jsonify({"Message": f"No matching subdivision data found with the given search term(s): {search_terms}. Try using the query string parameter '?likeness' and reduce the likeness score to expand the search space, '?likeness=30' will return subdivision data that have a 30% match to the input name. The current likeness score is set to {search_likeness_score}."}), 200
+        return jsonify({"Message": f"No matching subdivision data found with the given search term(s): {search_terms}. Try using the query string parameter '?likeness' and reduce the likeness score to expand the search space, for example '?likeness=30' will return subdivision data that have a 30% match to the input name. The current likeness score is set to {search_likeness_score}."}), 200
 
     #the package's search() adds a 'code' attribute that just repeats the subdivision code the result is
     #already keyed by (or its subdivisionCode when the match score is included). drop it so /search returns
